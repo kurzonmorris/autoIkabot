@@ -15,14 +15,14 @@ This document is the master plan for the autoIkabot project. Before each coding 
   - `autoIkabot/data/` - encrypted account storage, config files
   - `autoIkabot/utils/` - shared helpers (logging, HTTP wrappers, etc.)
   - `autoIkabot/debug/` - debug log files and debug-related data
-  - `autoIkabot/locks/` - lock files for coordinating concurrent operations
+  - *(No `locks/` directory needed — locking is handled in-memory with `threading.Lock`)*
 - [ ] Create `requirements.txt` / `pyproject.toml` with dependencies
 - [ ] Create a `main.py` entry point
 - [ ] Ensure cross-platform compatibility: **Linux, Windows, and Docker containers**
   - Use `os.path` / `pathlib` for all file paths (no hardcoded separators)
   - Use cross-platform libraries for terminal UI (`rich` or plain-text fallback)
   - Provide a `Dockerfile` for containerised deployment
-  - Test that file locking works on both Windows (different locking mechanism) and Linux
+  - No cross-platform file locking concerns — locking is in-memory (`threading.Lock`)
 
 ### 1.2 Debug Logging System
 - [ ] Create the `debug/` directory for all debug-related files
@@ -31,39 +31,40 @@ This document is the master plan for the autoIkabot project. Before each coding 
   - Every HTTP request/response (URL, status code, key headers)
   - Every internal action performed by the script
   - All errors, warnings, and exceptions with full tracebacks
-- [ ] Enforce a **5 MB maximum file size** on the debug log:
-  - When the log approaches 5 MB, trim the oldest entries to make room for new ones
-  - Implementation: use a rotating log handler (e.g. Python's `RotatingFileHandler`) or a custom truncation routine that removes from the top of the file
-- [ ] Enforce a **1-week maximum age** on log entries:
-  - On each write (or on a periodic check), purge entries older than 7 days
-  - Each log entry must include a timestamp for this to work
+- [ ] Implement a **custom single-file log handler** (`SelfPruningFileHandler`) that keeps everything in one file (`debug/debug.log`):
+  - **Size limit (5 MB)**: Before each write, check the file size. If it exceeds 5 MB, trim the oldest ~20% of lines from the top of the file, then append the new entry.
+  - **Age limit (7 days)**: At startup and periodically (e.g. every 100 writes), scan for lines with timestamps older than 7 days and strip them from the top.
+  - This keeps it as genuinely **one file** that self-manages — no `.1`, `.2` backup files, no rotation.
 - [ ] Log format should include: `[TIMESTAMP] [LEVEL] [SOURCE_MODULE] MESSAGE`
 - [ ] Separate the debug log from any user-facing output log — the debug log is for diagnostics only, stored in `debug/debug.log`
 
 **Lessons from ikabot:** The previous script stored too much in a single log file and multiple threads writing simultaneously caused corruption. Our approach:
-- Use Python's `logging` module with a **thread-safe handler** (it is thread-safe by default via internal locks)
-- Use `RotatingFileHandler` to manage size
+- Use Python's `logging` module with a **custom thread-safe handler** (the `logging` module is thread-safe by default via internal locks)
+- Use our `SelfPruningFileHandler` instead of `RotatingFileHandler` — this trims old entries from the single file rather than creating numbered backup files
 - **Never** have multiple separate log files competing — funnel everything through one logging instance with one handler
 
-### 1.3 Lock File System
-- [ ] Create the `locks/` directory for all lock files
-- [ ] Implement a lock manager that:
-  - Creates named lock files in the `locks/` directory (e.g. `locks/transport.lock`, `locks/construction.lock`)
-  - Each lock file stores: holder name (which module/thread), timestamp when acquired, and a PID
-  - **30-second timeout by default**: if a lock is held for more than 30 seconds and is not actively being used, it is automatically released (stale lock detection)
-  - A background watchdog (thread or periodic check) that scans the `locks/` folder and force-releases any stale locks
-  - Some operations may need longer locks — provide a way to acquire a lock with a custom timeout (e.g. `acquire_lock("transport", timeout=120)`)
-- [ ] Lock operations:
-  - `acquire_lock(name, timeout=30)` — acquire a named lock, wait up to N seconds if already held, raise error if timeout exceeded
-  - `release_lock(name)` — explicitly release a named lock
-  - `is_locked(name)` — check if a lock is currently held
-  - Context manager support: `with lock("transport"): ...` for automatic release
-- [ ] Cross-platform locking:
-  - On Linux: use `fcntl.flock` or file-based advisory locks
-  - On Windows: use `msvcrt.locking` or `portalocker` library
-  - Or use `portalocker` (cross-platform) as a single solution for both
+### 1.3 In-Memory Lock System (`threading.Lock`)
+- [ ] Implement a lock manager using Python's `threading.Lock` — no filesystem locks needed:
+  - Each account runs as its own process, with multiple module threads inside that process
+  - Different account processes don't share game resources, so cross-process locking is unnecessary
+  - Named locks for shared game resources (e.g. `"merchant_ships"`, `"construction"`, `"military_units"`)
+- [ ] Lock behaviour:
+  - **Acquire timeout = 30 seconds**: if a module can't acquire the lock within 30 seconds (another module is holding it), log a warning and retry on the next cycle. This is the time a user would wait to know something is happening.
+  - **Hold timeout = advisory only**: if a lock is held for more than 10 seconds, log a warning to the debug log (helps spot slow operations). No force-release — the context manager handles cleanup automatically.
+  - **No watchdog thread needed** — context managers (`with` blocks) guarantee the lock is released when the block exits, even on exceptions. This is simpler and safer than a background thread force-releasing locks mid-operation.
+- [ ] Lock API:
+  - `resource_lock(name, timeout=30)` — returns a context manager. Usage: `with resource_lock("merchant_ships", timeout=30): ...`
+  - The context manager calls `threading.Lock.acquire(timeout=30)` on enter and `.release()` on exit
+  - If acquire times out, raise a `LockTimeoutError` with a clear message (which module holds it, how long)
+  - `is_locked(name)` — check if a lock is currently held (for status display / debugging)
+- [ ] Lock metadata tracking (for debugging):
+  - When a lock is acquired, record: holder thread name, module name, timestamp
+  - When a lock is released, clear the metadata
+  - This metadata is purely in-memory — used for the timeout warning logs and diagnostics
 
-**Why this matters:** Multiple modules (construction, transport, combat) may try to interact with the same game elements simultaneously. Without proper locking, requests could interleave and corrupt game state or trigger anti-bot detection.
+**Why this matters:** Multiple modules (construction, transport, combat) may try to interact with the same game elements simultaneously. For example, a transport module locks `"merchant_ships"` while sending resources, preventing another module from trying to use those ships at the same time. Without locking, requests could interleave and corrupt game state or trigger anti-bot detection.
+
+**Why `threading.Lock` and not file locks:** Each account runs as a separate process (e.g. 22 accounts = 22 processes), but within each process the modules are threads sharing the same game resources. `threading.Lock` is faster, simpler, fully cross-platform, and doesn't touch the filesystem. File locks would only be needed if multiple processes shared the same account's resources, which they don't.
 
 ### 1.4 Encrypted Account Storage
 - [ ] Design the account data model (fields per account):
@@ -96,6 +97,7 @@ This document is the master plan for the autoIkabot project. Before each coding 
 **Foreseeable issues:**
 - Master password UX: if the user forgets it, all stored accounts are lost. We should warn clearly on first setup.
 - Encryption library choice: `cryptography` (Fernet) is well-tested but adds a dependency. We could also use `pynacl`. Need to decide.
+- **Docker / headless support**: In containers or headless servers, there's no one to type the master password interactively. Solution: support an environment variable (`AUTOIKABOT_MASTER_KEY`). If the env var is set, use it to decrypt the accounts file automatically. If not set, prompt interactively. This works cleanly with Docker Compose `environment:` blocks and Kubernetes secrets — the key isn't baked into the image.
 
 ---
 
@@ -120,8 +122,11 @@ This document is the master plan for the autoIkabot project. Before each coding 
 - [ ] After successful login, persist the session cookies (lobby cookies + game server cookies)
 - [ ] Detect "already logged in" scenarios and handle gracefully
 
-### 2.3 Proxy Activation Post-Login
-- [ ] After login succeeds, check account config:
+### 2.3 Proxy Activation Post-Lobby
+- [ ] **Proxy activates AFTER lobby, not before.** The lobby/login system has proxy detection; the game servers do not.
+  - Login and lobby requests always use the real IP (no proxy)
+  - Once lobby completes and the session transitions to the game server, THEN apply proxy settings to the `requests.Session`
+- [ ] After lobby succeeds, check account config:
   - If proxy is set AND auto-activate is on: configure session to route through proxy, display `[PROXY ACTIVE]` at top of screen
   - If proxy is set AND auto-activate is off: ask user "Use proxy [host:port]? (y/n)"
   - If no proxy is set: skip silently, no prompt
@@ -129,6 +134,7 @@ This document is the master plan for the autoIkabot project. Before each coding 
 **Foreseeable issues:**
 - Login endpoints may change with game updates. We need the attribute reference file to be our source of truth so we can update quickly.
 - The lobby is a separate system from the game servers. We may need to maintain two sets of cookies (lobby + game server) and handle them independently.
+- **Proxy detection on lobby**: The lobby has proxy detection, so login and lobby requests must always go through the real IP. Proxy is only applied to game server requests after lobby completes. The session manager must cleanly switch proxy settings at this transition point.
 - Some servers may have region locks or different login URLs. The URL pattern `s{NUM}-{REGION}.ikariam.gameforge.com` needs the correct region code.
 - Session cookies may expire mid-operation. We need a session-refresh mechanism (Phase 3).
 - Graveyard servers may have a different URL pattern or behaviour — need to detect and warn the user.
@@ -326,6 +332,6 @@ Each of these will get their own detailed sub-plan when we reach them:
 5. **Incremental development**: Build, test, and verify each phase before moving to the next.
 6. **Error handling**: Every network call, file operation, and parse operation should have explicit error handling with clear messages.
 7. **Logging discipline**: All diagnostic output goes through the central debug logger (Phase 1.2). No module should open or write to log files directly. This prevents the multi-writer corruption that broke ikabot.
-8. **Locking discipline**: Any operation that touches shared game state or sends game requests must acquire the appropriate lock first (Phase 1.3). Lock names should be descriptive (e.g. `"transport"`, `"construction"`, `"session_refresh"`).
+8. **Locking discipline**: Any operation that touches shared game resources must acquire the appropriate lock first (Phase 1.3). Always use the context manager (`with resource_lock("name"):`) — never manually acquire/release. Lock names should be descriptive and resource-specific (e.g. `"merchant_ships"`, `"construction_queue"`, `"military_units"`).
 9. **Cross-platform**: Use `pathlib.Path` for file paths, avoid OS-specific commands, test on Linux and Windows. Docker support is a first-class requirement.
 10. **No hardcoded URLs**: All server URLs are constructed from the server number + region pattern. The lobby URL and URL templates live in a config, not scattered through the code.
