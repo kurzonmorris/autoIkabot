@@ -54,7 +54,11 @@ This file documents every important HTML element, ID, class, attribute, form fie
 
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| *(to be filled from website scans)* | | | |
+| `https://lobby.ikariam.gameforge.com/en_US/hub` | Browser URL bar | The main lobby URL. One account can play on multiple servers simultaneously. The lobby lists all available servers and any "graveyard" servers (where inactive accounts are moved). | |
+| `s59` (in URL `s59-en.ikariam.gameforge.com`) | Server URL subdomain | The server number. Each game server has a unique number. Format: `s{number}` | |
+| `en` (in URL `s59-en.ikariam.gameforge.com`) | Server URL subdomain | The region/language code. Determines which regional cluster the server belongs to (e.g. `en` = English). | |
+| Server URL pattern: `https://s{NUM}-{REGION}.ikariam.gameforge.com/` | Browser URL | The full base URL pattern for any game server. Combine server number + region to form the base URL. | |
+| Graveyard server | Lobby server list | A special server where accounts are moved after prolonged inactivity. Not a regular playable server. | |
 
 ---
 
@@ -70,7 +74,9 @@ This file documents every important HTML element, ID, class, attribute, form fie
 
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| *(to be filled from website scans)* | | | |
+| `?view=city&cityId={ID}` | URL query string | Navigates to a specific city. Each city has a unique numeric ID. Example: `?view=city&cityId=1295` loads the city with ID 1295. | |
+| `cityId` | URL parameter / API parameter | The unique numeric identifier for a city. Used throughout the game in URLs and API calls to reference a specific city. First city example: `1295`. | |
+| `view=city` | URL parameter | Tells the game to render the city view for the given `cityId`. | |
 
 ---
 
