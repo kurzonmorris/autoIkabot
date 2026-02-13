@@ -248,62 +248,106 @@ Content-Type: application/json
 
 ### Building Position Links (City View)
 
+**IMPORTANT:** Building positions (1-24) vary from city to city and player to player. The **only fixed position is Town Hall at position 0**. Players can rearrange buildings within their city. The building at any given position must be determined at runtime by reading the page.
+
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| `id="js_CityPosition0Link"` | City view | Town Hall (position 0) | |
-| `id="js_CityPosition1Link"` | City view | Trading Port (position 1) | |
-| `id="js_CityPosition2Link"` | City view | Trading Port (position 2) | |
-| `id="js_CityPosition3Link"` | City view | Chronos' Forge (position 3) | |
-| `id="js_CityPosition4Link"` | City view | Warehouse (position 4) | |
-| `id="js_CityPosition5Link"` | City view | Warehouse (position 5) | |
-| `id="js_CityPosition6Link"` | City view | Warehouse (position 6) | |
-| `id="js_CityPosition7Link"` | City view | Warehouse (position 7) | |
-| `id="js_CityPosition8Link"` | City view | Temple (position 8) | |
-| `id="js_CityPosition9Link"` | City view | Academy (position 9) | |
-| `id="js_CityPosition10Link"` | City view | Carpenter's Workshop (position 10) | |
-| `id="js_CityPosition11Link"` | City view | Wine Press (position 11) | |
-| `id="js_CityPosition12Link"` | City view | Optician (position 12) | |
-| `id="js_CityPosition13Link"` | City view | Firework Test Area (position 13) | |
-| `id="js_CityPosition14Link"` | City view | Town Wall (position 14) | |
-| `id="js_CityPosition15Link"` | City view | Tavern (position 15) | |
-| `id="js_CityPosition16Link"` | City view | Architect's Office (position 16) | |
-| `id="js_CityPosition17Link"` | City view | Pirate Fortress (position 17) | |
-| `id="js_CityPosition18Link"` | City view | Hideout (position 18) | |
+| `id="js_CityPosition{N}Link"` | City view | Link to building at position N (0-24). N=0 is always Town Hall. All other positions are player-configured. | |
+| `id="js_CityPosition{N}Img"` | City view | Building image container at position N | |
+| `id="js_CityPosition{N}CountdownText"` | City view | Upgrade countdown timer at position N (visible during construction) | |
+| `id="js_CityPosition{N}SpeedupButton"` | City view | Ambrosia speed-up button at position N (title="Shorten building time") | |
+| `data-id="{N}"` | Building element | Data attribute containing the position number | |
+| `id="setCityBuildingsDraggable"` | City view | Toggle to enable building rearrangement mode | |
+| `id="toggleBuildingInfos"` | City view | Toggle to show/hide building name labels | |
 
 ---
 
 ## 6. Buildings
 
-### Building Types & View Parameters
+**IMPORTANT:** There are **33 buildable building types** plus **3 special non-buildable constructs**. Building positions (1-24) vary per city and per player — only Town Hall (position 0) is fixed. The building at any position must be read from the page at runtime.
 
-| Building Name | View Param | Positions | User Notes |
-|---------------|-----------|-----------|------------|
-| Town Hall | `townHall` | 0 | Always position 0 |
-| Trading Port | `port` | 1, 2 | Can have multiple |
-| Chronos' Forge | `chronosForge` | 3 | |
-| Warehouse | `warehouse` | 4, 5, 6, 7 | Can have multiple |
-| Temple | `temple` | 8 | |
-| Academy | `academy` | 9 | |
-| Carpenter's Workshop | `carpentering` | 10 | |
-| Wine Press | `vineyard` | 11 | |
-| Optician | `optician` | 12 | |
-| Firework Test Area | `fireworker` | 13 | |
-| Town Wall | `wall` | 14 | |
-| Tavern | `tavern` | 15 | |
-| Architect's Office | `architect` | 16 | |
-| Pirate Fortress | `pirateFortress` | 17 | |
-| Hideout | `safehouse` | 18 | |
+### All 33 Buildable Building Types
 
-### Building URL Pattern
+| ID | Building Name | View Param | `buildingDetail` ID | Category | User Notes |
+|----|---------------|-----------|---------------------|----------|------------|
+| 0 | Town Hall | `townHall` | `buildingId=0` | Core | Always position 0. Increases max citizens per level. |
+| 3 | Trading Port | `port` | `buildingId=3` | Trade | Can have multiple in a city. Required for sea trade. |
+| 4 | Academy | `academy` | `buildingId=4` | Research | Trains scientists, enables research. |
+| 5 | Shipyard | `shipyard` | `buildingId=5` | Military | Builds warships. |
+| 6 | Barracks | `barracks` | `buildingId=6` | Military | Trains land military units. |
+| 7 | Warehouse | `warehouse` | `buildingId=7` | Storage | Can have multiple in a city. Protects resources from pillaging. |
+| 8 | Town Wall | `wall` | `buildingId=8` | Defense | Provides defensive bonus in combat. |
+| 9 | Tavern | `tavern` | `buildingId=9` | Happiness | Serves wine to increase citizen satisfaction. |
+| 10 | Museum | `museum` | `buildingId=10` | Happiness | Displays cultural goods for satisfaction bonus. |
+| 11 | Palace | `palace` | `buildingId=11` | Core | Only in capital city. Enables founding new colonies. |
+| 12 | Embassy | `embassy` | `buildingId=12` | Diplomacy | Required to create/join alliances. |
+| 13 | Trading Post | `branchOffice` | `buildingId=13` | Trade | Stores luxury goods for trade on island. |
+| 15 | Workshop | `workshop` | `buildingId=15` | Military | Builds siege weapons / war machines. |
+| 16 | Hideout | `safehouse` | `buildingId=16` | Espionage | Trains and houses spies. |
+| 17 | Governor's Residence | `palaceColony` | `buildingId=17` | Core | In colony cities (non-capital). Reduces corruption. |
+| 18 | Forester's House | `forester` | `buildingId=18` | Reduction | Reduces wood costs for buildings. |
+| 19 | Stonemason | `stonemason` | `buildingId=19` | Reduction | Reduces marble costs for buildings. |
+| 20 | Glassblower | `glassblowing` | `buildingId=20` | Reduction | Reduces crystal glass costs for buildings. |
+| 21 | Winery | `winegrower` | `buildingId=21` | Reduction | Reduces wine costs for buildings. |
+| 22 | Alchemist's Tower | `alchemist` | `buildingId=22` | Reduction | Reduces sulfur costs for buildings. |
+| 23 | Carpenter's Workshop | `carpentering` | `buildingId=23` | Reduction | Reduces wood costs for units. |
+| 24 | Architect's Office | `architect` | `buildingId=24` | Reduction | Reduces building upgrade time. |
+| 25 | Optician | `optician` | `buildingId=25` | Reduction | Reduces crystal glass costs for units. |
+| 26 | Wine Press | `vineyard` | `buildingId=26` | Reduction | Reduces wine costs for units. |
+| 27 | Firework Test Area | `fireworker` | `buildingId=27` | Reduction | Reduces sulfur costs for units. |
+| 28 | Temple | `temple` | `buildingId=28` | Religion | Converts citizens to priests. Enables deity miracles. |
+| 29 | Dump (Depot) | `dump` | `buildingId=29` | Storage | Extra storage that can be pillaged. |
+| 30 | Pirate Fortress | `pirateFortress` | `buildingId=30` | Piracy | Enables piracy missions, crew management. |
+| 31 | Black Market | `blackMarket` | `buildingId=31` | Piracy | Sells pirate loot for resources/gold. |
+| 32 | Sea Chart Archive | `marineChartArchive` | `buildingId=32` | Piracy | Extends piracy mission range. |
+| 33 | Dockyard | `dockyard` | `buildingId=33` | Military | Related to naval fleet management. |
+| 34 | Gods' Shrine | `shrineOfOlympus` | `buildingId=34` | Religion | Shrine for deity worship. |
+| 35 | Chronos' Forge | `chronosForge` | `buildingId=35` | Special | Time-manipulation building. Not on the wiki. |
+
+### 3 Special Non-Buildable Constructs
+
+These exist in some cities but cannot be built or upgraded by the player:
+
+| Name | Purpose | User Notes |
+|------|---------|------------|
+| Cinetheater | Developer advertising mechanism. Shows video ads for production bonuses. | Bonus tracked via `adVideoBonus` IDs |
+| Ambrosia Fountain | Premium feature. Only appears in the capital city (same city as the Palace). | Status: `fountain_active_full` |
+| Helios Tower | Provides 10% production bonus. Cannot be built — activated via Ambrosia/events. | Bonus tracked via `heliosTowerBonus` IDs |
+
+### Building URL Patterns
 
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
 | `?view={viewParam}&cityId={ID}&position={POS}` | URL query string | Opens a specific building. Example: `?view=tavern&cityId=1295&position=15` | |
+| `?view=buildingDetail&buildingId={ID}&helpId=1` | URL query string | Opens the in-game help/detail page for a building type | |
 | `dialog=buildingConstructionList` | URL parameter | Opens the construction queue dialog for a building | |
+
+### Building Upgrade Mechanics
+
+| Reference Code | Location | Purpose | User Notes |
+|----------------|----------|---------|------------|
+| `underConstruction` field (value `-1` = none) | JS data | Tracks whether a building is currently being upgraded | |
+| `endUpgradeTime` / `startUpgradeTime` | JS data | Unix timestamps for upgrade start and completion | |
+| Upgrade costs scale exponentially | Game mechanic | Each level costs significantly more resources and time than the previous | |
+| Premium accounts can queue multiple builds | Game mechanic | Non-premium = 1 at a time, premium = multiple queued | |
 
 ---
 
 ## 7. Resources & Production
+
+### Resource Types Overview
+
+There are **5 gatherable resources**, **1 currency**, **1 premium currency**, and **population**:
+
+| Resource | Internal Name | Deposit Name | Luxury Good? | User Notes |
+|----------|--------------|-------------|-------------|------------|
+| Building Material (Wood) | `resource` / `wood` | Forest | No (base resource) | Produced on every island |
+| Wine | `1` / `wine` | Vines | Yes | Island-specific luxury |
+| Marble | `2` / `marble` | Quarry | Yes | Island-specific luxury |
+| Crystal Glass | `3` / `crystal` / `glass` | Crystal Mine | Yes | Island-specific luxury |
+| Sulfur | `4` / `sulfur` | Sulphur Pit | Yes | Island-specific luxury |
+| Gold | `gold` | — | No (currency) | Earned from taxes, trade |
+| Ambrosia | `ambrosia` | — | No (premium currency) | Purchased with real money |
 
 ### Global Resource IDs (Top Navigation Bar)
 
@@ -312,8 +356,9 @@ Content-Type: application/json
 | `id="js_GlobalMenu_gold"` | Top nav | Current gold amount | |
 | `id="js_GlobalMenu_gold_Total"` | Top nav tooltip | Total gold display | |
 | `id="js_GlobalMenu_gold_tooltip"` | Top nav tooltip | Gold tooltip container | |
+| `id="js_GlobalMenu_gold_Calculation"` | Top nav tooltip | Total gold income/expense calculation | |
 | `id="js_GlobalMenu_income"` | Top nav tooltip | Hourly gold income | |
-| `id="js_GlobalMenu_upkeep"` | Top nav tooltip | Hourly gold upkeep | |
+| `id="js_GlobalMenu_upkeep"` | Top nav tooltip | Hourly gold upkeep (building costs) | |
 | `id="js_GlobalMenu_ambrosia"` / `id="headlineAmbrosia"` | Top nav | Ambrosia (premium currency) amount | |
 | `id="js_GlobalMenu_wood"` | Top nav | Building material (wood) amount | |
 | `id="js_GlobalMenu_wood_Total"` | Top nav tooltip | Total wood display | |
@@ -321,33 +366,34 @@ Content-Type: application/json
 | `id="js_GlobalMenu_wine"` | Top nav | Wine resource amount | |
 | `id="js_GlobalMenu_wine_Total"` | Top nav tooltip | Total wine display | |
 | `id="js_GlobalMenu_marble"` | Top nav | Marble resource amount | |
+| `id="js_GlobalMenu_crystal"` | Top nav | Crystal glass resource amount | |
+| `id="js_GlobalMenu_sulfur"` | Top nav | Sulfur resource amount | |
 | `id="js_GlobalMenu_max_wood"` | Top nav tooltip | Wood storage capacity | |
 | `id="js_GlobalMenu_max_wine"` | Top nav tooltip | Wine storage capacity | |
+| `id="js_GlobalMenu_max_marble"` | Top nav tooltip | Marble storage capacity | |
+| `id="js_GlobalMenu_max_crystal"` | Top nav tooltip | Crystal glass storage capacity | |
+| `id="js_GlobalMenu_max_sulfur"` | Top nav tooltip | Sulfur storage capacity | |
 | `id="js_GlobalMenu_citizens"` | Top nav | Current citizen count | |
 | `id="js_GlobalMenu_population"` | Top nav | Max population | |
 | `id="js_GlobalMenu_maxActionPoints"` | Top nav | Available action points | |
 | `id="js_GlobalMenu_WineConsumption"` | Top nav tooltip | Wine consumption per hour | |
-| `id="js_GlobalMenu_resourceProduction"` | Top nav tooltip | Resource production rate | |
+| `id="js_GlobalMenu_resourceProduction"` | Top nav tooltip | Wood production rate per hour | |
 
 ### Production Bonus IDs
 
+The pattern `js_GlobalMenu_production_{resource}_{bonusType}_value` applies to all resource types (wood, wine, marble, crystal, sulfur):
+
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| `id="js_GlobalMenu_production_gold_premiumBonus"` | Gold tooltip | Premium gold bonus row | |
-| `id="js_GlobalMenu_production_gold_premiumBonus_value"` | Gold tooltip | Premium gold bonus value | |
-| `id="js_GlobalMenu_production_wood_premiumBonus"` | Wood tooltip | Premium wood bonus row | |
-| `id="js_GlobalMenu_production_wood_premiumBonus_value"` | Wood tooltip | Premium wood bonus value | |
-| `id="js_GlobalMenu_production_wood_adVideoBonus"` | Wood tooltip | Ad video wood bonus row | |
-| `id="js_GlobalMenu_production_wood_adVideoBonus_value"` | Wood tooltip | Ad video wood bonus value | |
-| `id="js_GlobalMenu_production_wood_heliosTowerBonus"` | Wood tooltip | Helios tower wood bonus row | |
-| `id="js_GlobalMenu_production_wood_heliosTowerBonus_value"` | Wood tooltip | Helios tower wood bonus value | |
-| `id="js_GlobalMenu_production_wood_godBonus"` | Wood tooltip | God (deity) wood bonus row | |
-| `id="js_GlobalMenu_production_wood_godBonus_value"` | Wood tooltip | God (deity) wood bonus value | |
-| `id="js_GlobalMenu_branchOffice_wood"` | Wood tooltip | Trading post wood contribution row | |
-| `id="js_GlobalMenu_branchOffice_wine"` | Wine tooltip | Trading post wine contribution row | |
-| `id="js_GlobalMenu_badTaxAccountant"` | Gold tooltip | Bad tax accountant bonus | |
+| `id="js_GlobalMenu_production_{res}_premiumBonus_value"` | Resource tooltip | Premium account bonus percentage (20%) | Applies to all 5 resources |
+| `id="js_GlobalMenu_production_{res}_adVideoBonus_value"` | Resource tooltip | Cinetheater (ad video) bonus percentage | |
+| `id="js_GlobalMenu_production_{res}_heliosTowerBonus_value"` | Resource tooltip | Helios Tower bonus percentage (10%) | |
+| `id="js_GlobalMenu_production_{res}_godBonus_value"` | Resource tooltip | God/deity bonus percentage (varies by god) | |
+| `id="js_GlobalMenu_production_{res}_active_bonuses"` | Resource tooltip | Container for all active bonus rows | |
+| `id="js_GlobalMenu_branchOffice_{res}"` | Resource tooltip | Trading Post contribution for this resource | Applies to wood, wine, marble, crystal, sulfur |
+| `id="js_GlobalMenu_badTaxAccountant"` | Gold tooltip | Bad Tax Accountant bonus (gold income boost) | |
 | `id="js_GlobalMenu_godGoldResult"` | Gold tooltip | God (Plutus) gold bonus | |
-| `id="js_GlobalMenu_scientistsUpkeep"` | Gold tooltip | Scientists upkeep cost | |
+| `id="js_GlobalMenu_scientistsUpkeep"` | Gold tooltip | Scientists upkeep cost per hour | |
 
 ### Transport Resource IDs
 
@@ -362,9 +408,11 @@ Content-Type: application/json
 
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| `class="wood"` | Resource elements | Wood/building material identifier | |
+| `class="wood"` / `class="wood bonusActive"` | Resource elements | Wood/building material. `bonusActive` when production bonus is active. | |
 | `class="wine"` | Resource elements | Wine resource identifier | |
-| `class="marble"` | Resource elements | Marble resource identifier | |
+| `class="marble"` / `class="marble bonusActive"` | Resource elements | Marble resource. `bonusActive` when production bonus is active. | |
+| `class="glass"` | Resource elements | Crystal glass resource identifier | |
+| `class="sulfur"` | Resource elements | Sulfur resource identifier | |
 | `class="population"` | Resource elements | Population identifier | |
 | `class="actions"` | Resource elements | Action points identifier | |
 | `class="transporters"` | Resource elements | Merchant ships identifier | |
@@ -375,14 +423,38 @@ Content-Type: application/json
 | `id="resources_wood"` | Resource bar | Wood resource element | |
 | `id="resources_wine"` | Resource bar | Wine resource element | |
 | `id="resources_marble"` | Resource bar | Marble resource element | |
+| `id="resources_glass"` | Resource bar | Crystal glass resource element | |
+| `id="resources_sulfur"` | Resource bar | Sulfur resource element | |
 
 ---
 
 ## 8. Military / Troops
 
+### Military Views & Navigation
+
 | Reference Code | Location | Purpose | User Notes |
 |----------------|----------|---------|------------|
-| *(to be filled from website scans)* | | | |
+| `?view=militaryAdvisor&oldView={view}&cityId={id}` | URL parameter | Military advisor overview | |
+| `?view=premiumMilitaryAdvisor&oldView={view}&cityId={id}` | URL parameter | Premium military advisor (more detail) | |
+| `?view=cityMilitary&activeTab=tabUnits&cityId={id}` | URL parameter | City military units detail view | |
+| `?view=unitdescription&unitId={id}&helpId=9` | URL parameter | Land unit detail/help page | |
+| `?view=unitdescription&shipId={id}&helpId=10` | URL parameter | Ship detail/help page | |
+| `?view=ikipedia&helpId=8&subHelpId=1` | URL parameter | Help: Land unit classes | |
+| `?view=ikipedia&helpId=8&subHelpId=2` | URL parameter | Help: Sea unit classes | |
+| `?view=ikipedia&helpId=0&subHelpId=4` | URL parameter | Help: Warfare | |
+| `?view=ikipedia&helpId=0&subHelpId=5` | URL parameter | Help: Warships and Battle | |
+
+### Military HTML Elements
+
+| Reference Code | Location | Purpose | User Notes |
+|----------------|----------|---------|------------|
+| `id="js_GlobalMenu_military"` | Top nav | Military advisor link | |
+| `id="js_GlobalMenu_militaryPremium"` | Top nav | Premium military advisor link | |
+| `class="slot0 military"` | City menu | Military menu item | |
+| `class="image_troops"` | City menu icons | Troops icon class | |
+| `class="image_fireunit"` | City menu icons | Fire/siege unit icon class | |
+| `<span class="namebox">Troops in the town</span>` | City menu | Troops overview label | |
+| `<span class="namebox">Dismiss units</span>` | City menu | Unit dismissal label | |
 
 ---
 
@@ -547,9 +619,104 @@ sec-ch-ua-platform: "Windows"
 | `window.dataLayer` | Global JS | Google Tag Manager data layer | |
 | `mmoticker` | Global JS | News ticker object | |
 
+### `dataSetForView` — Main Game State Object
+
+This object is embedded in every page response and contains the current game state. Key fields:
+
+```
+dataSetForView = {
+  gameName: "Ikariam",
+  serverName: "Perseus",
+  avatarId: "100128",              // Player's unique ID
+  avatarAllyId: "11",              // Alliance ID
+  serverTime: "1770994963",        // Unix timestamp
+  backgroundView: "city",          // Current background view
+  isOwnCity: true,                 // Whether viewing own city
+  producedTradegood: "2",          // Island luxury type (1=wine, 2=marble, 3=crystal, 4=sulfur)
+
+  // Current resources (indexed: resource=wood, 1=wine, 2=marble, 3=crystal, 4=sulfur)
+  currentResources: { citizens, population, resource, 1, 2, 3, 4 },
+  maxResources: { resource, 1, 2, 3, 4 },
+
+  // Production rates
+  resourceProduction: 1.259,       // Wood per second
+  tradegoodProduction: 2.048,      // Luxury good per second
+  wineSpendings: 1130,             // Wine consumed per hour
+  upkeep: -50258,                  // Building upkeep per hour
+  income: 14050.10,                // Gold income per hour
+  badTaxAccountant: 2810.02,       // Tax bonus per hour
+  scientistsUpkeep: -3410.32,      // Scientist costs per hour
+  godGoldResult: 0,                // Deity gold bonus
+
+  hasPremiumAccount: '1',          // '1' = premium, '0' = free
+
+  // Current view context
+  viewParams: { view, cityId, dialog, position },
+
+  // Related cities with metadata
+  relatedCityData: [
+    { id, name, coords, tradegood, relationship, isCapital, ownerId, ownerName, islandId, islandName }
+  ],
+
+  // Advisor notification counts
+  advisorData: { military, cities, research, diplomacy }
+}
+```
+
+### Localization Strings Object
+
+```
+LocalizationStrings = {
+  // Resource names
+  ambrosia, gold, tradegood, wood, wine, marble, crystal, sulfur,
+
+  // Deposit names
+  forest: "Forest", vines: "Vines", quarry: "Quarry",
+  crystalMine: "Crystal Mine", sulphurPit: "Sulphur pit",
+
+  // Time format
+  year: "Y", month: "M", day: "D", hour: "h", minute: "m", second: "s",
+  decimalPoint: ".", thousandSeparator: ",",
+
+  // Language
+  language: "en"
+}
+```
+
 ---
 
-## 20. Miscellaneous
+## 20. In-Game Help System (ikipedia)
+
+| helpId | subHelpId | Content | User Notes |
+|--------|-----------|---------|------------|
+| 0 | 0 | Basic Gameplay Overview | |
+| 0 | 1 | Buildings, Building Material, Population | |
+| 0 | 2 | Research | |
+| 0 | 3 | Trade | |
+| 0 | 4 | Warfare | |
+| 0 | 5 | Warships and Battle | |
+| 0 | 6 | Towns and Alliances | |
+| 0 | 7 | Godly Protection | |
+| 1 | — | Building Help (navigation to all buildings) | |
+| 5 | — | Resources — Building Material | |
+| 6 | — | Resources — Luxury Goods | |
+| 8 | 1 | Land unit classes | |
+| 8 | 2 | Sea unit classes | |
+| 9 | — | Units (individual unit details via `unitId`) | |
+| 10 | — | Ships (individual ship details via `shipId`) | |
+| 18 | 4 | Dictatorship (government type) | |
+| 20 | 1 | Units (alternative path) | |
+| 20 | 2 | Ships (alternative path) | |
+
+URL pattern: `?view=ikipedia&helpId={id}&subHelpId={sub}`
+Building detail: `?view=buildingDetail&buildingId={id}&helpId=1`
+Unit detail: `?view=unitdescription&unitId={id}&helpId=9`
+Ship detail: `?view=unitdescription&shipId={id}&helpId=10`
+Government detail: `?view=formOfRuleDetail&formId={id}&helpId={id}&subHelpId={sub}`
+
+---
+
+## 21. Miscellaneous
 
 ### CDN & Asset Domains
 
