@@ -103,74 +103,199 @@ This document is the master plan for the autoIkabot project. Before each coding 
 
 ## Phase 2: Login & Session Management
 
+> **Status:** Login flow fully mapped from ikabot v7.2.5 source + live cURL/HTML captures. See `ikariam_attributes.md` sections 1 and 17 for complete endpoint and cookie references.
+
 ### 2.1 HTTP Session Setup
-- [ ] Create a `requests.Session` (or `httpx` async client) with:
-  - Proper User-Agent header mimicking a real browser
-  - Cookie jar persistence
-  - Configurable timeouts and retries
+- [ ] Create a `requests.Session` with:
+  - User-Agent selected deterministically from a pool of 34 agents based on email hash: `user_agents[sum(ord(c) for c in email) % len(user_agents)]` — ensures same email always sends same UA
+  - Cookie jar persistence (both lobby cookies and game server cookies)
+  - Configurable timeouts (default 30s for normal requests, 900s for captcha/token API calls)
+  - Retry logic: 5-minute wait on connection errors, then retry
+  - SSL verification enabled by default
+  - Request history tracking (deque of last 5 requests for debugging)
 - [ ] Implement optional proxy configuration on the session
   - Support HTTP, HTTPS, and SOCKS5 proxies
+  - Proxy applies ONLY to game server requests (Phase 2.3)
 
-### 2.2 Login Flow
-- [ ] Study the exact login sequence from the website (forms, endpoints, redirects)
-  - Populate `ikariam_attributes.md` with login form fields, URLs, expected responses
-- [ ] Implement the two-stage login:
-  - **Stage 1 — Lobby login**: POST credentials to `https://lobby.ikariam.gameforge.com/en_US/hub` (or its login endpoint). This authenticates the account.
-  - **Stage 2 — Server selection**: From the lobby, select the target server (e.g. `s59-en`). The lobby redirects/issues a token to enter the game server at `https://s59-en.ikariam.gameforge.com/`.
-  - Handle the full redirect chain from lobby to game server
-- [ ] Handle login failures (wrong password, captcha, maintenance, server down, graveyard redirect, etc.)
-- [ ] After successful login, persist the session cookies (lobby cookies + game server cookies)
-- [ ] Detect "already logged in" scenarios and handle gracefully
+### 2.2 Login Flow (10 Phases)
+
+The login is a 10-phase process. Each phase must succeed before the next begins.
+
+#### Phase 1 — Get Environment IDs
+- [ ] `GET https://lobby.ikariam.gameforge.com/config/configuration.js`
+  - Extract `gameEnvironmentId` and `platformGameId` via regex
+  - These are required for the auth POST in Phase 4
+
+#### Phase 2 — Cloudflare Handshake
+- [ ] `GET https://gameforge.com/js/connect.js`
+  - Obtains initial Cloudflare `__cfduid` cookie
+  - **Check for Cloudflare CAPTCHA challenge** — if present, abort with "Captcha error!" (cannot be solved programmatically)
+- [ ] `GET https://gameforge.com/config`
+  - Updates Cloudflare tracking cookie
+
+#### Phase 3 — Device Fingerprinting (Pixel Zirkus)
+- [ ] Two `POST https://pixelzirkus.gameforge.com/do/simple` requests:
+  - First with `location=VISIT` + random `fp_eval_id`
+  - Second with `location=fp_eval` + different random `fp_eval_id`
+  - **Errors silently ignored** — fingerprinting failure does not block login
+
+#### Phase 4 — Authentication Request
+- [ ] `OPTIONS https://gameforge.com/api/v1/auth/thin/sessions` (CORS preflight)
+- [ ] `POST https://spark-web.gameforge.com/api/v2/authProviders/mauth/sessions` with JSON payload:
+  ```json
+  {
+    "identity": "user@email.com",
+    "password": "password",
+    "locale": "en-GB",
+    "gfLang": "en",
+    "gameId": "ikariam",
+    "gameEnvironmentId": "<from Phase 1>",
+    "blackbox": "tra:<from Phase 3 blackbox API>"
+  }
+  ```
+- [ ] Required headers: `Origin: https://lobby.ikariam.gameforge.com`, `Referer: https://lobby.ikariam.gameforge.com/`, `Content-Type: application/json`, `TNT-Installation-Id: ""` (empty string)
+
+#### Phase 5 — 2FA / MFA Handling
+- [ ] If auth response is HTTP 409 with `OTP_REQUIRED` in body:
+  - Prompt user for 2FA code (interactive mode only)
+  - Re-send the Phase 4 auth POST with `otpCode` field added
+  - If non-interactive (background process), abort with error
+
+#### Phase 6 — Interactive Captcha Handling
+- [ ] Detect captcha: response header contains `gf-challenge-id` AND no `token` in response body
+- [ ] Captcha image endpoints:
+  - `GET https://image-drop-challenge.gameforge.com/challenge/{id}/en-GB` (metadata)
+  - `GET .../text?{timestamp}` (instruction image)
+  - `GET .../drag-icons?{timestamp}` (4 draggable icons)
+  - `GET .../drop-target?{timestamp}` (drop target)
+- [ ] Captcha solving (in priority order):
+  1. **Automatic API**: `POST /v1/decaptcha/lobby` to external solver (sends text_image + icons_image, returns 0-3)
+  2. **Telegram fallback**: Send images to user's Telegram, wait for numeric answer (1-4)
+  3. **Manual fallback**: Display in terminal, ask user
+- [ ] Submit answer: `POST .../challenge/{id}/en-GB` with `{"answer": 0-3}`. Check for `status: "solved"`.
+- [ ] Loop until solved or max attempts reached
+
+#### Phase 7 — Token Extraction
+- [ ] On success: extract `token` from auth response JSON → this becomes the `gf-token-production` cookie (UUID format)
+- [ ] **Manual fallback**: If token not in response, prompt user to run in browser console:
+  `document.cookie.split(';').forEach(x => {if (x.includes('production')) console.log(x)})`
+- [ ] Cache the `gf-token-production` in encrypted session file (shared across all accounts with same email)
+
+#### Phase 8 — Account & Server Selection
+- [ ] `GET https://lobby.ikariam.gameforge.com/api/users/me/accounts` with `Authorization: Bearer {gf-token-production}`
+  - Returns list of accounts with IDs, server info, last login times, blocked status
+- [ ] `GET https://lobby.ikariam.gameforge.com/api/servers`
+  - Returns all servers with names, languages, numbers
+- [ ] If 1 non-blocked account → auto-select. If multiple → display list, let user choose.
+- [ ] Extract: `username`, `login_servidor`, `account_group`, `mundo` (world)
+
+#### Phase 9 — Game Server Cookie
+- [ ] First, test cached cookies (if any) by GET to game server base URL. If valid, skip to Phase 10.
+- [ ] `POST https://lobby.ikariam.gameforge.com/api/users/me/loginLink` with JSON:
+  ```json
+  {
+    "server": {"language": "en", "number": "59"},
+    "clickedButton": "account_list",
+    "id": "<account_id>",
+    "blackbox": "tra:<blackbox_token>"
+  }
+  ```
+- [ ] Response contains `{"url": "https://s59-en.ikariam.gameforge.com/index.php?..."}` — a one-time login URL
+- [ ] Follow this URL (GET with redirects). This sets the game server cookies: `ikariam` (format: `{user_id}_{hex_hash}`), `PHPSESSID`, `GTPINGRESSCOOKIE`
+
+#### Phase 10 — Session Validation
+- [ ] Check response HTML for failure indicators:
+  - `"nologin_umod"` → account in vacation mode, abort
+  - `"index.php?logout"` or `'<a class="logout"'` → session expired, retry (up to 3 times from Phase 9)
+- [ ] On success: save all game server cookies to encrypted session file
+- [ ] Extract initial `actionRequest` (CSRF token) from response HTML: `<input type="hidden" id="js_ChangeCityActionRequest" name="actionRequest" value="...">`
 
 ### 2.3 Proxy Activation Post-Lobby
-- [ ] **Proxy activates AFTER lobby, not before.** The lobby/login system has proxy detection; the game servers do not.
-  - Login and lobby requests always use the real IP (no proxy)
-  - Once lobby completes and the session transitions to the game server, THEN apply proxy settings to the `requests.Session`
+- [ ] **Proxy activates AFTER Phase 9, not before.** The lobby/login system has proxy detection; the game servers do not.
+  - Phases 1-9 always use the real IP (no proxy)
+  - Once Phase 9 completes and game cookies are set, THEN apply proxy settings to the `requests.Session`
 - [ ] After lobby succeeds, check account config:
   - If proxy is set AND auto-activate is on: configure session to route through proxy, display `[PROXY ACTIVE]` at top of screen
   - If proxy is set AND auto-activate is off: ask user "Use proxy [host:port]? (y/n)"
   - If no proxy is set: skip silently, no prompt
 
+### 2.4 CSRF Token Management (actionRequest)
+- [ ] Every POST to the game server requires a valid `actionRequest` token (32-char hex hash)
+- [ ] Extract from response HTML after each request: `<input type="hidden" id="js_ChangeCityActionRequest" name="actionRequest" value="...">`
+- [ ] If server responds with `TXT_ERROR_WRONG_REQUEST_ID`: re-fetch current page, extract fresh token, retry the failed request
+- [ ] Token is per-session and changes after certain actions
+
+### 2.5 Session Expiration Detection & Recovery
+- [ ] On every response, check for expiration signals:
+  - `"index.php?logout"` in HTML → session dead
+  - `'<a class="logout"'` in HTML → session dead
+- [ ] On expiration: attempt automatic re-login (Phase 7 onwards if `gf-token-production` still valid, otherwise full Phase 1-10)
+- [ ] Log all re-login attempts to debug log
+
 **Foreseeable issues:**
-- Login endpoints may change with game updates. We need the attribute reference file to be our source of truth so we can update quickly.
-- The lobby is a separate system from the game servers. We may need to maintain two sets of cookies (lobby + game server) and handle them independently.
-- **Proxy detection on lobby**: The lobby has proxy detection, so login and lobby requests must always go through the real IP. Proxy is only applied to game server requests after lobby completes. The session manager must cleanly switch proxy settings at this transition point.
-- Some servers may have region locks or different login URLs. The URL pattern `s{NUM}-{REGION}.ikariam.gameforge.com` needs the correct region code.
-- Session cookies may expire mid-operation. We need a session-refresh mechanism (Phase 3).
-- Graveyard servers may have a different URL pattern or behaviour — need to detect and warn the user.
+- Login endpoints may change with game updates. `ikariam_attributes.md` is our source of truth so we can update quickly.
+- The lobby is a separate system from game servers. We maintain two cookie sets (lobby + game server) independently.
+- **Proxy detection on lobby**: Login always goes through real IP. Proxy only applies after Phase 9. Session manager must cleanly switch proxy at this transition.
+- Some servers may have region locks or different login URLs. URL pattern `s{NUM}-{REGION}.ikariam.gameforge.com` needs the correct region code from the servers API.
+- Session cookies may expire mid-operation. Phase 2.5 handles automatic re-login.
+- Graveyard servers may have different URL patterns — detect via servers API and warn user.
+- **Blackbox token dependency**: Phases 4 and 9 both require a blackbox token. If the external API is down, login fails. We need a fallback (manual token entry or cached token).
 
 ---
 
 ## Phase 3: Blackbox / Anti-Bot Token System
 
-### 3.1 Understand the Token System
-- [ ] Document how the blackbox anti-bot system works:
-  - When is the token requested? (on login? periodically? on specific actions?)
-  - What does the token request look like? (endpoint, headers, payload)
-  - What does the response look like?
-  - How is the token submitted back to the game?
-- [ ] Fill in the "Blackbox / Anti-Bot Token System" section of `ikariam_attributes.md`
+> **Status:** Token system documented from ikabot v7.2.5 source. See `ikariam_attributes.md` section 2 for reference.
 
-### 3.2 Internal Token Generation
-- [ ] Study the existing token generator app code you provide
-- [ ] Determine if the token generation algorithm can be replicated in Python
-  - If yes: implement it as a module in `autoIkabot/core/token_handler.py`
-  - If no (e.g. it requires a specific runtime/environment): implement a bridge to call the external app
-- [ ] Create a token generation interface that the rest of the code calls uniformly
+### 3.1 Token System (Now Documented)
 
-### 3.3 Periodic Token Check & Auto-Submission
-- [ ] Implement a background check (could be a thread or async task) that:
-  - Monitors responses from the game server for token challenge indicators
-  - When a challenge is detected, generates a fresh token
-  - Submits the token automatically
-  - Logs the event so the user can see it happened
-- [ ] Define the check interval (configurable in settings)
-- [ ] Handle failure cases: what if token generation fails? Retry? Alert user?
+**How it works (confirmed from source):**
+- The blackbox token is a device fingerprinting string, prefixed with `tra:` (e.g. `tra:JVqc1fosb5TG-E2h5Ak7bZL...`)
+- It is required at **two points during login only**: the auth POST (Phase 2, Step 4) and the loginLink POST (Phase 2, Step 9)
+- It is NOT submitted periodically during gameplay — only at login/session creation
+- The token is fetched from an external API server: `GET /v1/token?user_agent={user_agent}`
+- The API server domain (`ikagod.twilightparadox.com`) is resolved via DNS TXT records to get the current hostname/IP
+- The response body (JSON string) is prefixed with `tra:` to form the full token
+
+### 3.2 Token Generation Strategy
+- [ ] **Primary method**: Fetch from the existing external API (same as ikabot uses)
+  - `GET {api_server}/v1/token?user_agent={user_agent}` → prepend `tra:` to response
+  - DNS TXT lookup on `ikagod.twilightparadox.com` to resolve API server address
+  - Timeout: 900 seconds (captcha and token API calls are slow)
+- [ ] **Fallback method**: Prompt user to manually provide a blackbox token
+  - User can extract from browser dev tools (Network tab during login)
+  - Store the manually-provided token for reuse within the session
+- [ ] **Future option**: Reverse-engineer the token generation algorithm from the JavaScript source
+  - The `fullikabot.zip` reference contains an `IkabotAPI-main/` directory that may have additional token generation code
+  - This is a stretch goal — external API is simpler and more maintainable
+- [ ] Create `autoIkabot/core/token_handler.py` with a uniform interface:
+  - `get_blackbox_token(user_agent: str) -> str` — returns full `tra:...` token
+  - Tries external API first, then manual fallback
+
+### 3.3 Captcha Handling (Integrated with Login)
+
+**Note:** Captcha is part of the login flow (Phase 2, Step 6), not a separate periodic system. There is no in-game captcha during normal gameplay. The captcha system is:
+- **Trigger**: Auth response contains `gf-challenge-id` header + no `token` in body
+- **Type**: Image-drop challenge (pick 1 of 4 icons matching a text description)
+- **Solving priority**:
+  1. External API: `POST {api_server}/v1/decaptcha/lobby` with `text_image` + `icons_image` files → returns integer 0-3
+  2. Telegram: Send images to configured bot, wait for user response
+  3. Manual terminal prompt
+
+### 3.4 Periodic Session Health Check
+- [ ] Implement a lightweight background thread that periodically:
+  - Sends a `?view=updateGlobalData` request to the game server
+  - Checks the response for session expiry indicators (Phase 2.5)
+  - If expired, triggers automatic re-login
+  - Logs the check result to debug log
+- [ ] Configurable check interval (default: every 5 minutes)
+- [ ] This is NOT about anti-bot tokens — it's about keeping the session alive and detecting expiry early
 
 **Foreseeable issues:**
-- The anti-bot system is the single biggest technical risk. If the token algorithm is obfuscated or hardware-bound, internal generation may not be possible.
-- Timing matters: submitting too fast might look bot-like; too slow might cause a session timeout.
-- The game may update its anti-bot system at any time, breaking our implementation.
+- **External API dependency**: If `ikagod.twilightparadox.com` goes down or changes, token generation fails. The manual fallback mitigates this.
+- The DNS TXT lookup adds latency. Cache the resolved address for the session duration.
+- The external API timeout is 900s (15 min) — this is because the captcha solver may take time. Normal token requests should be much faster.
+- Gameforge may change the blackbox format or add new fingerprinting requirements at any time.
 
 ---
 
@@ -245,31 +370,43 @@ Enter number:
 ### 5.1 Request Wrapper
 - [ ] Build a central function for all game requests that:
   - Acquires appropriate lock (from Phase 1.3 lock system) before sending
-  - Sends the HTTP request
-  - Checks the response for anti-bot challenges (triggers Phase 3 handler)
-  - Checks for session expiry (triggers re-login)
+  - Sends HTTP request to `POST /index.php` with required headers (see `ikariam_attributes.md` section 18)
+  - **Always includes**: `actionRequest` (CSRF token), `ajax=1`, `currentCityId`, and action-specific parameters
+  - **Content-Type**: `application/x-www-form-urlencoded; charset=UTF-8`
+  - **Required headers**: `X-Requested-With: XMLHttpRequest`, `Origin`, `Referer`, `sec-ch-ua*` headers
+  - Checks response for `TXT_ERROR_WRONG_REQUEST_ID` → re-fetch CSRF token and retry
+  - Checks for session expiry (`"index.php?logout"` in response) → triggers re-login
+  - Re-extracts `actionRequest` token from every response HTML
   - Parses the HTML/JSON response
   - Returns structured data to the calling module
   - Logs every request/response to the debug log (Phase 1.2) — URL, method, status, timing, and response summary
   - All logging goes through the central debug logger — **never** writes directly to a file (avoids the ikabot multi-writer corruption bug)
+  - Maintains request history (deque of last 5 requests) for debugging
 
 ### 5.2 Game State Parser
-- [ ] Build parsers for common game pages:
-  - City overview (buildings, levels, population, resources)
-  - Island view (cities, resource type, deity)
-  - World map (island coordinates)
-  - Resource bars (current amounts, production rates, storage capacity)
+- [ ] Build parsers for common game pages using the element IDs from `ikariam_attributes.md` section 7:
+  - **Resource bar**: `js_GlobalMenu_gold`, `js_GlobalMenu_wood`, `js_GlobalMenu_wine`, `js_GlobalMenu_marble`, `js_GlobalMenu_citizens`, `js_GlobalMenu_population`
+  - **Transport capacity**: `js_GlobalMenu_freeTransporters`, `js_GlobalMenu_maxTransporters`, `js_GlobalMenu_freeFreighters`, `js_GlobalMenu_maxFreighters`
+  - **Storage**: `js_GlobalMenu_max_wood`, `js_GlobalMenu_max_wine`
+  - **Production rates**: `js_GlobalMenu_resourceProduction`, `js_GlobalMenu_income`, `js_GlobalMenu_upkeep`
+  - **City view**: Building positions 0-18 via `js_CityPosition{N}Link` elements
+  - **Island view**: `islandId`, resource/tradegood dialogs
+  - **Server time**: `servertime` element (format: `DD.MM.YYYY HH:MM:SS CET`)
+- [ ] The `?view=updateGlobalData` endpoint returns fresh resource/timer data — use this for periodic state sync
 - [ ] Store parsed state in a central game state object that modules can read
 
 ### 5.3 Cookie Management
 - [ ] Implement cookie import/export:
-  - Export current session cookies to a file (JSON or Netscape format)
+  - Export current session cookies to a file (JSON format)
+  - Key cookies to export: `gf-token-production`, `ikariam`, `PHPSESSID`, `GTPINGRESSCOOKIE`, `cf_clearance`, `__cf_bm`
   - Import cookies from a file to resume a session without re-login
-  - Validate imported cookies (test if session is still alive)
+  - Validate imported cookies (test with GET to game server base URL, check for expiry signals)
 
 **Foreseeable issues:**
-- The game likely uses AJAX calls that return JSON rather than full page HTML. We need to identify these endpoints (in `ikariam_attributes.md`) to parse them properly.
-- Rate limiting: sending too many requests too fast will get us flagged. We need configurable delays between requests.
+- The game uses AJAX calls (`ajaxHandlerCall()`) that return HTML fragments, not full pages. Parsing must handle both full HTML and AJAX fragments.
+- The `updateGlobalData` endpoint returns structured data for resource updates — this is the primary data sync mechanism.
+- Rate limiting: sending too many requests too fast will get flagged. Configurable delays between requests (ikabot used 5-minute waits on connection errors).
+- The `actionRequest` CSRF token changes unpredictably — must always use the most recently extracted value.
 
 ---
 
