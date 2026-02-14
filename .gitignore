@@ -206,5 +206,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Encrypted account storage (contains credentials — never commit)
+autoIkabot/data/accounts.enc
+autoIkabot/data/accounts.tmp
+
 # Extracted reference files (zips are tracked separately)
 reference/
