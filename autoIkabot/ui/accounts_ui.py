@@ -168,7 +168,25 @@ def _add_new_account_flow(
 
     default_server = servers[0] if servers else ""
 
-    print("\n  The blackbox token is a device fingerprint used during login.")
+    print("\n  -- Gameforge Lobby Token (gf-token-production) --")
+    print("  This is a session cookie that can skip the entire login flow.")
+    print("  It often stays valid for months or even years.")
+    print("  To get it:")
+    print("    1. Log into Ikariam normally in your browser")
+    print("    2. Once on your server, open the browser console (F12)")
+    print("    3. If needed, type:  allow pasting")
+    print("    4. Paste this command:")
+    print("       document.cookie.split(';').forEach(x => {")
+    print("         if (x.includes('production')) console.log(x) })")
+    print("    5. Copy the UUID value after 'gf-token-production='")
+    print("  Leave blank to skip (normal login will be used instead).")
+    gf_token = read_input("gf-token-production (leave blank to skip): ").strip()
+    # Strip the cookie name prefix if user pasted the whole thing
+    if gf_token.startswith("gf-token-production="):
+        gf_token = gf_token[len("gf-token-production="):]
+
+    print("\n  -- Blackbox Token (device fingerprint) --")
+    print("  This is a device fingerprint (starts with 'tra:') sent during auth.")
     print("  It typically stays the same per account for years.")
     print("  If you have one, paste it now. Otherwise leave blank and")
     print("  it will be fetched automatically during login.")
@@ -176,6 +194,7 @@ def _add_new_account_flow(
 
     add_account(
         accounts, email, password, servers, default_server,
+        gf_token=gf_token,
         blackbox_token=blackbox_token,
     )
     save_accounts(accounts, master_password)
@@ -187,6 +206,7 @@ def _add_new_account_flow(
         "password": password,
         "servers": servers,
         "selected_server": default_server,
+        "gf_token": gf_token,
         "blackbox_token": blackbox_token,
         "proxy": None,
         "proxy_auto": False,
@@ -246,6 +266,7 @@ def _stored_mode_flow() -> Optional[Dict[str, Any]]:
                     "password": selected["password"],
                     "servers": selected.get("servers", []),
                     "selected_server": server,
+                    "gf_token": selected.get("gf_token", ""),
                     "blackbox_token": selected.get("blackbox_token", ""),
                     "proxy": selected.get("proxy"),
                     "proxy_auto": selected.get("proxy_auto", False),
@@ -307,6 +328,7 @@ def _manual_mode_flow() -> Optional[Dict[str, Any]]:
         "password": password,
         "servers": [server] if server else [],
         "selected_server": server,
+        "gf_token": "",
         "blackbox_token": "",
         "proxy": None,
         "proxy_auto": False,
@@ -337,12 +359,17 @@ def _display_confirmation(info: Dict[str, Any]) -> bool:
     else:
         print("  Server: (auto-detect from lobby)")
 
-    if info.get("blackbox_token"):
-        # Show just the first 20 chars so user can confirm it's theirs
-        token_preview = info["blackbox_token"][:20] + "..."
-        print(f"  Token:  {token_preview} (saved)")
+    if info.get("gf_token"):
+        gf_preview = info["gf_token"][:8] + "..."
+        print(f"  GF Token: {gf_preview} (saved — may skip login)")
     else:
-        print("  Token:  (will fetch during login)")
+        print("  GF Token: (none — will do full login)")
+
+    if info.get("blackbox_token"):
+        bb_preview = info["blackbox_token"][:20] + "..."
+        print(f"  BB Token: {bb_preview} (saved)")
+    else:
+        print("  BB Token: (will fetch during login)")
 
     if info.get("proxy"):
         proxy = info["proxy"]
@@ -369,6 +396,8 @@ def run_account_selection() -> Optional[Dict[str, Any]]:
         password        : str
         servers         : List[str]
         selected_server : str
+        gf_token        : str           (lobby cookie — skips auth if valid)
+        blackbox_token  : str           (device fingerprint)
         proxy           : Optional[Dict]
         proxy_auto      : bool
 

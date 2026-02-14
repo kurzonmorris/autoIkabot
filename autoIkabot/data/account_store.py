@@ -10,7 +10,11 @@ Account data model (dict keys per account):
     password         : str          - Gameforge password
     servers          : list[str]    - Servers this account is on (e.g. ["s59-en"])
     default_server   : str          - Preferred server to connect to
-    blackbox_token   : str          - Cached blackbox token (tra:...) — stable per account
+    gf_token         : str          - Cached gf-token-production (UUID) — lobby session
+                                      cookie. If valid, skips the entire auth flow
+                                      (phases 1-7). Can last months/years.
+    blackbox_token   : str          - Cached blackbox token (tra:...) — device fingerprint
+                                      sent during auth. Fetched from API if not stored.
     proxy            : dict | None  - {host, port, username, password}
     proxy_auto       : bool         - Auto-activate proxy after login
     notifications    : dict         - Backend preferences (per-account)
@@ -62,6 +66,7 @@ def _new_account_template() -> Account:
         "password": "",
         "servers": [],
         "default_server": "",
+        "gf_token": "",
         "blackbox_token": "",
         "proxy": None,
         "proxy_auto": False,
@@ -149,6 +154,7 @@ def add_account(
     password: str,
     servers: Optional[List[str]] = None,
     default_server: str = "",
+    gf_token: str = "",
     blackbox_token: str = "",
     proxy: Optional[Dict] = None,
     proxy_auto: bool = False,
@@ -167,9 +173,14 @@ def add_account(
         List of server identifiers (e.g. ["s59-en"]).
     default_server : str
         Preferred server.
+    gf_token : str
+        Cached gf-token-production cookie (UUID). This is the lobby session
+        cookie — if still valid, it skips the entire auth flow. Can last
+        months or even years. Shared across all servers for the same email.
     blackbox_token : str
-        Cached blackbox token (tra:...). Stable per account — typically
-        does not change unless Gameforge updates their fingerprinting.
+        Cached blackbox token (tra:...). Device fingerprint sent during
+        auth. Stable per account — typically does not change unless
+        Gameforge updates their fingerprinting.
     proxy : Optional[Dict]
         Proxy configuration dict or None.
     proxy_auto : bool
@@ -188,6 +199,7 @@ def add_account(
     account["password"] = password
     account["servers"] = servers
     account["default_server"] = default_server or (servers[0] if servers else "")
+    account["gf_token"] = gf_token
     account["blackbox_token"] = blackbox_token
     account["proxy"] = proxy
     account["proxy_auto"] = proxy_auto
