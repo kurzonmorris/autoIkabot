@@ -62,3 +62,50 @@ MASTER_KEY_ENV_VAR = "AUTOIKABOT_MASTER_KEY"
 # Platform detection
 # ---------------------------------------------------------------------------
 IS_WINDOWS = os.name == "nt"
+
+# ---------------------------------------------------------------------------
+# User-Agent pool (Phase 2.7)
+# ---------------------------------------------------------------------------
+USER_AGENTS_FILE = DATA_DIR / "user_agents.json"
+
+# ---------------------------------------------------------------------------
+# URL constants (Phase 2) — all Gameforge endpoints used during login
+# ---------------------------------------------------------------------------
+LOBBY_URL = "https://lobby.ikariam.gameforge.com"
+LOBBY_CONFIG_URL = f"{LOBBY_URL}/config/configuration.js"
+LOBBY_ACCOUNTS_URL = f"{LOBBY_URL}/api/users/me/accounts"
+LOBBY_SERVERS_URL = f"{LOBBY_URL}/api/servers"
+LOBBY_ME_URL = f"{LOBBY_URL}/api/users/me"
+LOBBY_LOGIN_LINK_URL = f"{LOBBY_URL}/api/users/me/loginLink"
+
+AUTH_SESSION_URL = "https://spark-web.gameforge.com/api/v2/authProviders/mauth/sessions"
+AUTH_OPTIONS_URL = "https://gameforge.com/api/v1/auth/thin/sessions"
+
+CLOUDFLARE_CONNECT_URL = "https://gameforge.com/js/connect.js"
+CLOUDFLARE_CONFIG_URL = "https://gameforge.com/config"
+
+PIXEL_ZIRKUS_URL = "https://pixelzirkus.gameforge.com/do/simple"
+
+CAPTCHA_CHALLENGE_URL = "https://challenge.gameforge.com/challenge/{challenge_id}"
+CAPTCHA_IMAGE_BASE_URL = "https://image-drop-challenge.gameforge.com/challenge/{challenge_id}/en-GB"
+
+# ---------------------------------------------------------------------------
+# API server for blackbox tokens and captcha solving (Phase 3)
+# ---------------------------------------------------------------------------
+PUBLIC_API_DOMAIN = "ikagod.twilightparadox.com"
+CUSTOM_API_ADDRESS_ENV = "CUSTOM_API_ADDRESS"
+
+# ---------------------------------------------------------------------------
+# HTTP / Network constants (Phase 2)
+# ---------------------------------------------------------------------------
+SSL_VERIFY = True
+REQUEST_TIMEOUT = 30               # seconds — normal requests
+CAPTCHA_TIMEOUT = 900              # seconds — captcha and token API calls
+CONNECTION_ERROR_WAIT = 5 * 60     # seconds — wait on connection failure
+LOGIN_MAX_RETRIES = 3              # retry count for login flow
+
+# Game server URL pattern — s{number}-{language}.ikariam.gameforge.com
+GAME_SERVER_PATTERN = "s{mundo}-{servidor}.ikariam.gameforge.com"
+
+# actionRequest placeholder used in URL templates
+ACTION_REQUEST_PLACEHOLDER = "REQUESTID"
