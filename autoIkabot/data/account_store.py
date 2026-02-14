@@ -10,10 +10,10 @@ Account data model (dict keys per account):
     password         : str          - Gameforge password
     servers          : list[str]    - Servers this account is on (e.g. ["s59-en"])
     default_server   : str          - Preferred server to connect to
+    blackbox_token   : str          - Cached blackbox token (tra:...) — stable per account
     proxy            : dict | None  - {host, port, username, password}
     proxy_auto       : bool         - Auto-activate proxy after login
     notifications    : dict         - Backend preferences (per-account)
-    blackbox_settings: dict         - Token generator config
 """
 
 import json
@@ -62,10 +62,10 @@ def _new_account_template() -> Account:
         "password": "",
         "servers": [],
         "default_server": "",
+        "blackbox_token": "",
         "proxy": None,
         "proxy_auto": False,
         "notifications": {},
-        "blackbox_settings": {},
     }
 
 
@@ -149,6 +149,7 @@ def add_account(
     password: str,
     servers: Optional[List[str]] = None,
     default_server: str = "",
+    blackbox_token: str = "",
     proxy: Optional[Dict] = None,
     proxy_auto: bool = False,
 ) -> List[Account]:
@@ -166,6 +167,9 @@ def add_account(
         List of server identifiers (e.g. ["s59-en"]).
     default_server : str
         Preferred server.
+    blackbox_token : str
+        Cached blackbox token (tra:...). Stable per account — typically
+        does not change unless Gameforge updates their fingerprinting.
     proxy : Optional[Dict]
         Proxy configuration dict or None.
     proxy_auto : bool
@@ -184,6 +188,7 @@ def add_account(
     account["password"] = password
     account["servers"] = servers
     account["default_server"] = default_server or (servers[0] if servers else "")
+    account["blackbox_token"] = blackbox_token
     account["proxy"] = proxy
     account["proxy_auto"] = proxy_auto
     accounts.append(account)

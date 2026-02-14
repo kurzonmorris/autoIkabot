@@ -168,7 +168,16 @@ def _add_new_account_flow(
 
     default_server = servers[0] if servers else ""
 
-    add_account(accounts, email, password, servers, default_server)
+    print("\n  The blackbox token is a device fingerprint used during login.")
+    print("  It typically stays the same per account for years.")
+    print("  If you have one, paste it now. Otherwise leave blank and")
+    print("  it will be fetched automatically during login.")
+    blackbox_token = read_input("Blackbox token (leave blank to skip): ")
+
+    add_account(
+        accounts, email, password, servers, default_server,
+        blackbox_token=blackbox_token,
+    )
     save_accounts(accounts, master_password)
     print(f"  Account '{email}' added and saved.")
 
@@ -178,6 +187,7 @@ def _add_new_account_flow(
         "password": password,
         "servers": servers,
         "selected_server": default_server,
+        "blackbox_token": blackbox_token,
         "proxy": None,
         "proxy_auto": False,
     }
@@ -236,6 +246,7 @@ def _stored_mode_flow() -> Optional[Dict[str, Any]]:
                     "password": selected["password"],
                     "servers": selected.get("servers", []),
                     "selected_server": server,
+                    "blackbox_token": selected.get("blackbox_token", ""),
                     "proxy": selected.get("proxy"),
                     "proxy_auto": selected.get("proxy_auto", False),
                 }
@@ -296,6 +307,7 @@ def _manual_mode_flow() -> Optional[Dict[str, Any]]:
         "password": password,
         "servers": [server] if server else [],
         "selected_server": server,
+        "blackbox_token": "",
         "proxy": None,
         "proxy_auto": False,
     }
@@ -324,6 +336,13 @@ def _display_confirmation(info: Dict[str, Any]) -> bool:
         print(f"  Server: {info['selected_server']}")
     else:
         print("  Server: (auto-detect from lobby)")
+
+    if info.get("blackbox_token"):
+        # Show just the first 20 chars so user can confirm it's theirs
+        token_preview = info["blackbox_token"][:20] + "..."
+        print(f"  Token:  {token_preview} (saved)")
+    else:
+        print("  Token:  (will fetch during login)")
 
     if info.get("proxy"):
         proxy = info["proxy"]
