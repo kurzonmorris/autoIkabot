@@ -217,13 +217,10 @@ def read(
 
 def enter() -> None:
     """Wait for the user to press Enter."""
-    if IS_WINDOWS:
+    try:
         input("\n[Enter]")
-    else:
-        try:
-            getpass.getpass("\n[Enter]")
-        except EOFError:
-            pass
+    except EOFError:
+        pass
 
 
 def banner() -> None:
