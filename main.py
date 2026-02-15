@@ -2,8 +2,8 @@
 """autoIkabot - Main entry point.
 
 Initializes the debug logging system, presents the account selection UI,
-runs the login flow, creates a game session, and (future) enters the
-main menu loop.
+runs the login flow, creates a game session, registers modules, and
+enters the main menu loop.
 """
 
 import sys
@@ -22,7 +22,7 @@ def main() -> None:
     4. Runs the 10-phase login flow.
     5. Creates a game Session wrapper.
     6. Activates proxy if configured.
-    7. (Future) Hands off to the main menu or spawns account processes.
+    7. Registers modules and enters the main menu loop.
     """
     # Ensure runtime directories exist
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,15 +101,25 @@ def main() -> None:
         # --- Phase 3.4: Start session health check ---
         session.start_health_check()
 
-        # --- Success ---
-        print()
-        print("=" * 50)
-        print(f"  Logged in as: {session.username}")
-        print(f"  Server: s{session.mundo}-{session.servidor} ({session.world_name})")
-        print(f"  Host: {session.host}")
-        print("=" * 50)
-        print()
-        print("[Phase 4+ not yet implemented — main menu coming next]")
+        # --- Phase 4: Register modules and run main menu ---
+        from autoIkabot.ui.menu import register_module, run_menu
+        from autoIkabot.modules.resourceTransportManager import (
+            resourceTransportManager,
+            MODULE_NAME,
+            MODULE_SECTION,
+            MODULE_NUMBER,
+            MODULE_DESCRIPTION,
+        )
+
+        register_module(
+            name=MODULE_NAME,
+            section=MODULE_SECTION,
+            number=MODULE_NUMBER,
+            description=MODULE_DESCRIPTION,
+            func=resourceTransportManager,
+        )
+
+        run_menu(session)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C).")

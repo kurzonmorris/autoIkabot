@@ -115,3 +115,13 @@ ACTION_REQUEST_PLACEHOLDER = "REQUESTID"
 # ---------------------------------------------------------------------------
 HEALTH_CHECK_INTERVAL = 5 * 60     # seconds between health checks (default 5 min)
 HEALTH_CHECK_VIEW = "view=updateGlobalData"  # lightweight endpoint for session keep-alive
+
+# ---------------------------------------------------------------------------
+# Game constants (Phase 5)
+# ---------------------------------------------------------------------------
+# Resource names in display order: index 0=Wood, 1=Wine, 2=Marble, 3=Crystal, 4=Sulfur
+MATERIALS_NAMES = ["Wood", "Wine", "Marble", "Crystal", "Sulfur"]
+
+# URL query fragments for fetching city/island views
+CITY_URL = "view=city&cityId="
+ISLAND_URL = "view=island&islandId="

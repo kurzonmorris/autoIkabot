@@ -295,6 +295,28 @@ class Session:
         logger.info("Proxy deactivated")
 
     # ------------------------------------------------------------------
+    # Status / display helpers (used by modules)
+    # ------------------------------------------------------------------
+
+    def setStatus(self, status: str) -> None:
+        """Set a status message for the current operation.
+
+        Logged and (in the future) displayed in the UI.
+
+        Parameters
+        ----------
+        status : str
+            Status text.
+        """
+        self._status = status
+        logger.info("Status: %s", status)
+
+    def logout(self) -> None:
+        """Close the session (cleanup)."""
+        self.stop_health_check()
+        logger.info("Session closed for %s", self.username)
+
+    # ------------------------------------------------------------------
     # HTTP methods — game server requests
     # ------------------------------------------------------------------
 
