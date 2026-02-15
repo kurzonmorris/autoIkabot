@@ -98,6 +98,9 @@ def main() -> None:
         if account_info.get("mode") == "stored":
             _update_cached_tokens(account_info, login_result, logger)
 
+        # --- Phase 3.4: Start session health check ---
+        session.start_health_check()
+
         # --- Success ---
         print()
         print("=" * 50)
@@ -106,7 +109,7 @@ def main() -> None:
         print(f"  Host: {session.host}")
         print("=" * 50)
         print()
-        print("[Phase 3+ not yet implemented — main menu coming next]")
+        print("[Phase 4+ not yet implemented — main menu coming next]")
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C).")

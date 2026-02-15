@@ -8,12 +8,14 @@ Wraps a requests.Session (already authenticated via core.login) and provides:
   - Proxy management (apply/remove after lobby)
   - Connection error retry with backoff
   - Server maintenance detection
+  - Periodic session health check (Phase 3.4)
 
 This class is the primary interface that all game modules will use to
 communicate with the Ikariam server.
 """
 
 import re
+import threading
 import time
 from collections import deque
 from typing import Any, Dict, Optional, Union
@@ -23,6 +25,8 @@ import requests
 from autoIkabot.config import (
     ACTION_REQUEST_PLACEHOLDER,
     CONNECTION_ERROR_WAIT,
+    HEALTH_CHECK_INTERVAL,
+    HEALTH_CHECK_VIEW,
     SSL_VERIFY,
 )
 from autoIkabot.utils.logging import get_logger
@@ -93,6 +97,10 @@ class Session:
 
         # Proxy state
         self._proxy_active = False
+
+        # Health check thread state (Phase 3.4)
+        self._health_thread: Optional[threading.Thread] = None
+        self._health_stop = threading.Event()
 
         logger.info(
             "Session initialized: %s on s%s-%s (%s)",
@@ -510,3 +518,78 @@ class Session:
                     "Timeout on POST, retrying in %ds", CONNECTION_ERROR_WAIT
                 )
                 time.sleep(CONNECTION_ERROR_WAIT)
+
+    # ------------------------------------------------------------------
+    # Periodic session health check (Phase 3.4)
+    # ------------------------------------------------------------------
+
+    def start_health_check(self, interval: int = HEALTH_CHECK_INTERVAL) -> None:
+        """Start the background health check thread.
+
+        Periodically sends a lightweight request to the game server to
+        keep the session alive and detect expiry early. If the session
+        is found to be expired, triggers automatic re-login.
+
+        The thread is a daemon — it dies automatically when the main
+        process exits.
+
+        Parameters
+        ----------
+        interval : int
+            Seconds between health checks (default: HEALTH_CHECK_INTERVAL).
+        """
+        if self._health_thread is not None and self._health_thread.is_alive():
+            logger.warning("Health check thread already running")
+            return
+
+        self._health_stop.clear()
+        self._health_thread = threading.Thread(
+            target=self._health_check_loop,
+            args=(interval,),
+            name="session-health-check",
+            daemon=True,
+        )
+        self._health_thread.start()
+        logger.info("Health check started (interval=%ds)", interval)
+
+    def stop_health_check(self) -> None:
+        """Stop the background health check thread."""
+        if self._health_thread is None or not self._health_thread.is_alive():
+            return
+
+        self._health_stop.set()
+        self._health_thread.join(timeout=10)
+        logger.info("Health check stopped")
+
+    def _health_check_loop(self, interval: int) -> None:
+        """Background loop that periodically checks session health.
+
+        Sends a GET request to ``?view=updateGlobalData`` which is a
+        lightweight endpoint that returns minimal game state. If the
+        response indicates the session has expired, triggers re-login.
+
+        Parameters
+        ----------
+        interval : int
+            Seconds between checks.
+        """
+        logger.info("Health check loop started")
+
+        while not self._health_stop.wait(timeout=interval):
+            try:
+                logger.debug("Health check: pinging game server")
+                html = self.get(HEALTH_CHECK_VIEW, ignore_expire=True)
+
+                if self._is_expired(html):
+                    logger.warning("Health check detected expired session")
+                    self._handle_session_expired()
+                    logger.info("Health check: re-login successful")
+                elif self._is_maintenance(html):
+                    logger.info("Health check: server in maintenance mode")
+                else:
+                    logger.debug("Health check: session is healthy")
+
+            except Exception as e:
+                logger.warning("Health check error: %s", e)
+
+        logger.info("Health check loop exiting")

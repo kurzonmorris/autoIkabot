@@ -109,3 +109,9 @@ GAME_SERVER_PATTERN = "s{mundo}-{servidor}.ikariam.gameforge.com"
 
 # actionRequest placeholder used in URL templates
 ACTION_REQUEST_PLACEHOLDER = "REQUESTID"
+
+# ---------------------------------------------------------------------------
+# Session health check (Phase 3.4)
+# ---------------------------------------------------------------------------
+HEALTH_CHECK_INTERVAL = 5 * 60     # seconds between health checks (default 5 min)
+HEALTH_CHECK_VIEW = "view=updateGlobalData"  # lightweight endpoint for session keep-alive
