@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoIkabot"
+version = "0.1.0"
+description = "Ikariam automation tool with encrypted account management"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "requests[socks]",
+    "cryptography>=41.0.0",
+    "argon2-cffi>=23.1.0",
+]
+
+[project.optional-dependencies]
+ui = ["rich>=13.0.0"]
+dev = ["pytest>=7.0.0", "pytest-cov"]
+
+[project.scripts]
+autoikabot = "autoIkabot.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["autoIkabot*"]
