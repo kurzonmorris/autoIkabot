@@ -101,22 +101,49 @@ def main() -> None:
         # --- Phase 3.4: Start session health check ---
         session.start_health_check()
 
-        # --- Phase 4: Register modules and run main menu ---
+        # --- Phase 4+5: Register modules and run main menu ---
         from autoIkabot.ui.menu import register_module, run_menu
-        from autoIkabot.modules.resourceTransportManager import (
-            resourceTransportManager,
-            MODULE_NAME,
-            MODULE_SECTION,
-            MODULE_NUMBER,
-            MODULE_DESCRIPTION,
+
+        # Settings modules (Phase 5.3)
+        from autoIkabot.modules.importExportCookie import (
+            importExportCookie,
+            MODULE_NAME as COOKIE_NAME,
+            MODULE_SECTION as COOKIE_SECTION,
+            MODULE_NUMBER as COOKIE_NUMBER,
+            MODULE_DESCRIPTION as COOKIE_DESC,
+        )
+        register_module(
+            name=COOKIE_NAME, section=COOKIE_SECTION,
+            number=COOKIE_NUMBER, description=COOKIE_DESC,
+            func=importExportCookie,
         )
 
+        # Transport modules (Phase 4)
+        from autoIkabot.modules.resourceTransportManager import (
+            resourceTransportManager,
+            MODULE_NAME as RTM_NAME,
+            MODULE_SECTION as RTM_SECTION,
+            MODULE_NUMBER as RTM_NUMBER,
+            MODULE_DESCRIPTION as RTM_DESC,
+        )
         register_module(
-            name=MODULE_NAME,
-            section=MODULE_SECTION,
-            number=MODULE_NUMBER,
-            description=MODULE_DESCRIPTION,
+            name=RTM_NAME, section=RTM_SECTION,
+            number=RTM_NUMBER, description=RTM_DESC,
             func=resourceTransportManager,
+        )
+
+        # Monitoring modules (Phase 5.2)
+        from autoIkabot.modules.getStatus import (
+            getStatus,
+            MODULE_NAME as STATUS_NAME,
+            MODULE_SECTION as STATUS_SECTION,
+            MODULE_NUMBER as STATUS_NUMBER,
+            MODULE_DESCRIPTION as STATUS_DESC,
+        )
+        register_module(
+            name=STATUS_NAME, section=STATUS_SECTION,
+            number=STATUS_NUMBER, description=STATUS_DESC,
+            func=getStatus,
         )
 
         run_menu(session)
