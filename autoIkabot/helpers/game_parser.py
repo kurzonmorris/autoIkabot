@@ -183,6 +183,8 @@ def getIsland(html: str) -> Dict[str, Any]:
     island["tipo"] = str(island.get("tradegood", ""))
 
     for city in island.get("cities", []):
+        if not isinstance(city, dict):
+            continue
         for key in ["Id", "Name", "AllyId", "AllyTag"]:
             owner_key = "owner" + key
             if owner_key in city:
@@ -217,19 +219,24 @@ def getIdsOfCities(session) -> tuple:
     """
     html = session.get()
     cities_raw = re.search(
-        r'relatedCityData:\s*JSON\.parse\(\'([\s\S]*?)\'\)', html
+        r'relatedCityData:\sJSON\.parse\(\'(.+?),\\"additionalInfo', html
     )
     if cities_raw is None:
         return ([], {})
 
-    cities_json = cities_raw.group(1).replace('\\"', '"')
+    cities_json = cities_raw.group(1) + "}"
+    cities_json = cities_json.replace("\\", "")
+    cities_json = cities_json.replace("city_", "")
     cities_data = json.loads(cities_json, strict=False)
 
     ids = []
     cities = {}
     for city_id, city_info in sorted(
-        cities_data.items(), key=lambda x: int(x[1].get("position", 0))
+        cities_data.items(),
+        key=lambda x: int(x[1].get("position", 0) if isinstance(x[1], dict) else 0),
     ):
+        if not isinstance(city_info, dict):
+            continue
         city_info["id"] = city_id
         city_info["name"] = decode_unicode_escape(city_info.get("name", ""))
         city_info["tradegood"] = int(city_info.get("tradegood", 0))
