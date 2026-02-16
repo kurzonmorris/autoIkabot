@@ -224,23 +224,12 @@ def enter() -> None:
 
 
 LOGO = r"""
-                                                                                                                                  bbbbbbbb
-               AAA                                     tttt                           IIIIIIIIIIkkkkkkkk                          b::::::b
-              A:::A                                 ttt:::t                           I::::::::Ik::::::k                          b::::::b
-             A:::::A                                t:::::t                           I::::::::Ik::::::k                          b::::::b
-            A:::::::A                               t:::::t                           II::::::IIk::::::k                           b:::::b
-           A:::::::::A        uuuuuu    uuuuuuttttttt:::::ttttttt       ooooooooooo     I::::I   k:::::k    kkkkkkkaaaaaaaaaaaaa   b:::::bbbbbbbbb       ooooooooooo   ttttttt:::::ttttttt
-          A:::::A:::::A       u::::u    u::::ut:::::::::::::::::t     oo:::::::::::oo   I::::I   k:::::k   k:::::k a::::::::::::a  b::::::::::::::bb   oo:::::::::::oo t:::::::::::::::::t
-         A:::::A A:::::A      u::::u    u::::ut:::::::::::::::::t    o:::::::::::::::o  I::::I   k:::::k  k:::::k  aaaaaaaaa:::::a b::::::::::::::::b o:::::::::::::::ot:::::::::::::::::t
-        A:::::A   A:::::A     u::::u    u::::utttttt:::::::tttttt    o:::::ooooo:::::o  I::::I   k:::::k k:::::k            a::::a b:::::bbbbb:::::::bo:::::ooooo:::::otttttt:::::::tttttt
-       A:::::A     A:::::A    u::::u    u::::u      t:::::t          o::::o     o::::o  I::::I   k::::::k:::::k      aaaaaaa:::::a b:::::b    b::::::bo::::o     o::::o      t:::::t
-      A:::::AAAAAAAAA:::::A   u::::u    u::::u      t:::::t          o::::o     o::::o  I::::I   k:::::::::::k     aa::::::::::::a b:::::b     b:::::bo::::o     o::::o      t:::::t
-     A:::::::::::::::::::::A  u::::u    u::::u      t:::::t          o::::o     o::::o  I::::I   k:::::::::::k    a::::aaaa::::::a b:::::b     b:::::bo::::o     o::::o      t:::::t
-    A:::::AAAAAAAAAAAAA:::::A u:::::uuuu:::::u      t:::::t    tttttto::::o     o::::o  I::::I   k::::::k:::::k  a::::a    a:::::a b:::::b     b:::::bo::::o     o::::o      t:::::t    tttttt
-   A:::::A             A:::::Au:::::::::::::::uu    t::::::tttt:::::to:::::ooooo:::::oII::::::IIk::::::k k:::::k a::::a    a:::::a b:::::bbbbbb::::::bo:::::ooooo:::::o      t::::::tttt:::::t
-  A:::::A               A:::::Au:::::::::::::::u    tt::::::::::::::to:::::::::::::::oI::::::::Ik::::::k  k:::::ka:::::aaaa::::::a b::::::::::::::::b o:::::::::::::::o      tt::::::::::::::t
- A:::::A                 A:::::Auu::::::::uu:::u      tt:::::::::::tt oo:::::::::::oo I::::::::Ik::::::k   k:::::ka::::::::::aa:::ab:::::::::::::::b   oo:::::::::::oo         tt:::::::::::tt
-AAAAAAA                   AAAAAAA uuuuuuuu  uuuu        ttttttttttt     ooooooooooo   IIIIIIIIIIkkkkkkkk    kkkkkkkaaaaaaaaaa  aaaabbbbbbbbbbbbbbbb      ooooooooooo             ttttttttttt
+               #                 _         _____ _         _           _
+#      __ _ _   _| |_ ___   \_   \ | ____ _| |__   ___ | |_
+#     / _` | | | | __/ _ \   / /\/ |/ / _` | '_ \ / _ \| __|
+#    | (_| | |_| | || (_) /\/ /_ |   < (_| | |_) | (_) | |_
+#     \__,_|\__,_|\__\___/\____/ |_|\_\__,_|_.__/ \___/ \__|
+#
 """
 
 
