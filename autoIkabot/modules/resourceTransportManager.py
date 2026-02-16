@@ -997,6 +997,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
     next_run_time = datetime.datetime.now()
     total_shipments = 0
     consecutive_failures = 0
+    ship_type_name = "freighters" if useFreighters else "merchant ships"
 
     while True:
         current_time = datetime.datetime.now()
@@ -1004,6 +1005,8 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
         if current_time < next_run_time and not first_run:
             time.sleep(60)
             continue
+
+        print(f"\n--- Starting shipment cycle ---")
 
         if notify_on_start:
             total_resources_this_cycle = [0] * len(MATERIALS_NAMES)
@@ -1040,14 +1043,15 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
 
             if resources_list:
                 source_cities_names = ', '.join([city['name'] for city in origin_cities])
-                ship_type_name = "freighters" if useFreighters else "merchant ships"
                 start_msg = f"SHIPMENT STARTING\nAccount: {session.username}\nFrom: {source_cities_names}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nShip type: {ship_type_name}\nTotal resources: {', '.join(resources_list)}\nGrand total: {addThousandSeparator(grand_total_this_cycle)}"
                 sendToBot(session, start_msg)
 
+        print(f"  Fetching destination city data...")
         html = session.get(CITY_URL + str(destination_city['id']))
         destination_city = getCity(html)
 
-        for origin_city in origin_cities:
+        for city_index, origin_city in enumerate(origin_cities):
+            print(f"\n  [{city_index + 1}/{len(origin_cities)}] Processing: {origin_city['name']}")
             html = session.get(CITY_URL + str(origin_city['id']))
             origin_city = getCity(html)
 
@@ -1080,6 +1084,12 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                 total_to_send += sendable
 
             if total_to_send > 0:
+                resources_desc = ", ".join(
+                    f"{addThousandSeparator(toSend[i])} {MATERIALS_NAMES[i]}"
+                    for i in range(len(MATERIALS_NAMES)) if toSend[i] > 0
+                )
+                print(f"    Sending: {resources_desc}")
+
                 ship_type = 'freighters' if useFreighters else 'merchant ships'
                 ships_available = False
                 ship_check_start = time.time()
@@ -1092,12 +1102,14 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
 
                     if available_ships > 0:
                         ships_available = True
+                        print(f"    Found {available_ships} {ship_type}")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
                         wait_time = 120
                         elapsed = int(time.time() - ship_check_start)
+                        print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
@@ -1116,6 +1128,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         lock_acquired = True
                     else:
                         retry_count += 1
+                        print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying...")
                         if retry_count < max_retries and telegram_enabled:
                             msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Failed to acquire shipping lock on attempt {retry_count}/{max_retries}\nAction: Retrying in 1 minute..."
                             sendToBot(session, msg)
@@ -1141,6 +1154,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
 
                         if ships_before == 0:
                             consecutive_failures += 1
+                            print(f"    Ships became unavailable, skipping")
                             if telegram_enabled:
                                 msg = f"SHIPMENT DELAYED\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Ships became unavailable before sending\nAction: Will retry in next cycle"
                                 sendToBot(session, msg)
@@ -1166,12 +1180,12 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                             total_shipments += 1
                             consecutive_failures = 0
 
-                            ship_type_name = "freighters" if useFreighters else "merchant ships"
-
                             resources_sent = []
                             for i, amount in enumerate(toSend):
                                 if amount > 0:
                                     resources_sent.append(f"{addThousandSeparator(amount)} {MATERIALS_NAMES[i]}")
+
+                            print(f"    SENT: {', '.join(resources_sent)} ({ships_needed} {ship_type_name})")
 
                             if telegram_enabled:
                                 msg = f"SHIPMENT SENT\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nShips: {ships_needed} {ship_type_name}\nSent: {', '.join(resources_sent)}"
@@ -1180,6 +1194,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         except Exception as send_error:
                             consecutive_failures += 1
                             error_msg = str(send_error)
+                            print(f"    FAILED: {error_msg}")
 
                             if telegram_enabled:
                                 msg = f"SHIPMENT FAILED\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nError: {error_msg}\nConsecutive failures: {consecutive_failures}\nAction: Will retry in next cycle"
@@ -1189,6 +1204,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         release_shipping_lock(session, use_freighters=useFreighters)
                 else:
                     consecutive_failures += 1
+                    print(f"    Could not acquire shipping lock after {max_retries} attempts")
                     if telegram_enabled:
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this cycle"
                         sendToBot(session, msg)
@@ -1197,18 +1213,22 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         alert_msg = f"WARNING\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: {consecutive_failures} consecutive shipping failures\nPlease check for issues!"
                         sendToBot(session, alert_msg)
             else:
+                print(f"    No resources to send (below threshold or no space)")
                 if telegram_enabled:
                     msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nStatus: No resources to send (all below thresholds or no space)"
                     sendToBot(session, msg)
 
         if interval_hours == 0:
             source_cities_names = ', '.join([city['name'] for city in origin_cities])
+            print(f"\n  One-time shipment complete! ({total_shipments} shipments sent)")
             session.setStatus(f"One-time shipment completed: {source_cities_names} -> {destination_city['name']}")
+            enter()
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)
 
         source_cities_names = ', '.join([city['name'] for city in origin_cities])
+        print(f"\n  Cycle complete ({total_shipments} shipments). Next run: {getDateTime(next_run_time.timestamp())}")
 
         session.setStatus(
             f"{source_cities_names} -> {destination_city['name']} | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
@@ -1225,6 +1245,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
     next_run_time = datetime.datetime.now()
     total_shipments = 0
     consecutive_failures = 0
+    ship_type_name = "freighters" if useFreighters else "merchant ships"
 
     while True:
         current_time = datetime.datetime.now()
@@ -1232,6 +1253,8 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         if current_time < next_run_time and not first_run:
             time.sleep(60)
             continue
+
+        print(f"\n--- Starting distribution cycle ---")
 
         if notify_on_start:
             total_resources_needed = [amount * len(destination_cities) for amount in resource_config]
@@ -1244,10 +1267,10 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
 
             if resources_list:
                 dest_names = ', '.join([city['name'] for city in destination_cities])
-                ship_type_name = "freighters" if useFreighters else "merchant ships"
                 start_msg = f"SHIPMENT STARTING\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: {len(destination_cities)} cities ({dest_names})\nShip type: {ship_type_name}\nTotal resources: {', '.join(resources_list)}\nGrand total: {addThousandSeparator(grand_total)}"
                 sendToBot(session, start_msg)
 
+        print(f"  Fetching source city data...")
         html = session.get(CITY_URL + str(origin_city['id']))
         origin_city = getCity(html)
 
@@ -1255,7 +1278,8 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         html_island = session.get(ISLAND_URL + str(origin_island_id))
         origin_island = getIsland(html_island)
 
-        for destination_city in destination_cities:
+        for dest_index, destination_city in enumerate(destination_cities):
+            print(f"\n  [{dest_index + 1}/{len(destination_cities)}] Sending to: {destination_city['name']}")
             html = session.get(CITY_URL + str(destination_city['id']))
             destination_city = getCity(html)
 
@@ -1284,6 +1308,12 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                 total_to_send += sendable
 
             if total_to_send > 0:
+                resources_desc = ", ".join(
+                    f"{addThousandSeparator(toSend[i])} {MATERIALS_NAMES[i]}"
+                    for i in range(len(MATERIALS_NAMES)) if toSend[i] > 0
+                )
+                print(f"    Sending: {resources_desc}")
+
                 ship_type = 'freighters' if useFreighters else 'merchant ships'
                 ships_available = False
                 ship_check_start = time.time()
@@ -1296,12 +1326,14 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
 
                     if available_ships > 0:
                         ships_available = True
+                        print(f"    Found {available_ships} {ship_type}")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
                         wait_time = 120
                         elapsed = int(time.time() - ship_check_start)
+                        print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
@@ -1320,6 +1352,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         lock_acquired = True
                     else:
                         retry_count += 1
+                        print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying...")
                         if retry_count < max_retries and telegram_enabled:
                             msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Failed to acquire shipping lock on attempt {retry_count}/{max_retries}\nAction: Retrying in 1 minute..."
                             sendToBot(session, msg)
@@ -1345,6 +1378,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
 
                         if ships_before == 0:
                             consecutive_failures += 1
+                            print(f"    Ships became unavailable, skipping")
                             if telegram_enabled:
                                 msg = f"SHIPMENT DELAYED\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Ships became unavailable before sending\nAction: Will retry in next cycle"
                                 sendToBot(session, msg)
@@ -1370,12 +1404,12 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                             total_shipments += 1
                             consecutive_failures = 0
 
-                            ship_type_name = "freighters" if useFreighters else "merchant ships"
-
                             resources_sent = []
                             for i, amount in enumerate(toSend):
                                 if amount > 0:
                                     resources_sent.append(f"{addThousandSeparator(amount)} {MATERIALS_NAMES[i]}")
+
+                            print(f"    SENT: {', '.join(resources_sent)} ({ships_needed} {ship_type_name})")
 
                             if telegram_enabled:
                                 msg = f"SHIPMENT SENT\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nShips: {ships_needed} {ship_type_name}\nSent: {', '.join(resources_sent)}"
@@ -1384,6 +1418,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         except Exception as send_error:
                             consecutive_failures += 1
                             error_msg = str(send_error)
+                            print(f"    FAILED: {error_msg}")
 
                             if telegram_enabled:
                                 msg = f"SHIPMENT FAILED\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nError: {error_msg}\nConsecutive failures: {consecutive_failures}\nAction: Will retry in next cycle"
@@ -1393,6 +1428,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         release_shipping_lock(session, use_freighters=useFreighters)
                 else:
                     consecutive_failures += 1
+                    print(f"    Could not acquire shipping lock after {max_retries} attempts")
                     if telegram_enabled:
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this destination"
                         sendToBot(session, msg)
@@ -1401,18 +1437,23 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         alert_msg = f"WARNING\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: {consecutive_failures} consecutive shipping failures\nPlease check for issues!"
                         sendToBot(session, alert_msg)
             else:
+                print(f"    No resources to send (insufficient or no space)")
                 if telegram_enabled:
                     msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nStatus: No resources to send (insufficient or no space)"
                     sendToBot(session, msg)
 
         if interval_hours == 0:
             dest_names = ', '.join([city['name'] for city in destination_cities])
+            print(f"\n  One-time distribution complete! ({total_shipments} shipments sent)")
             session.setStatus(f"One-time distribution completed: {origin_city['name']} -> {dest_names}")
+            enter()
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)
 
         dest_names = ', '.join([city['name'] for city in destination_cities])
+        print(f"\n  Cycle complete ({total_shipments} shipments). Next run: {getDateTime(next_run_time.timestamp())}")
+
         session.setStatus(
             f"{origin_city['name']} -> {len(destination_cities)} cities | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
         )
