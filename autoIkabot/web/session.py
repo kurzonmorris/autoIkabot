@@ -111,6 +111,7 @@ class Session:
 
         # Phase 5.1: CSRF token cache — avoids extra GET on every POST
         self._action_request_token: str = ""
+        self._token_lock = threading.Lock()
 
         # Phase 5.1: Rate limiting
         self._last_request_time: float = 0.0
@@ -118,6 +119,10 @@ class Session:
 
         # Phase 5.1: Current city ID tracking
         self._current_city_id: str = ""
+        self._city_lock = threading.Lock()
+
+        # Proxy state lock (health check thread reads _proxy_active)
+        self._proxy_lock = threading.Lock()
 
         logger.info(
             "Session initialized: %s on s%s-%s (%s)",
@@ -215,7 +220,8 @@ class Session:
             logger.warning("Could not extract actionRequest token from HTML")
             return ""
         token = match.group(1)
-        self._action_request_token = token
+        with self._token_lock:
+            self._action_request_token = token
         return token
 
     def _try_extract_token(self, html: str) -> None:
@@ -231,7 +237,8 @@ class Session:
         """
         match = re.search(r'actionRequest"?:\s*"(.*?)"', html)
         if match:
-            self._action_request_token = match.group(1)
+            with self._token_lock:
+                self._action_request_token = match.group(1)
 
     def _try_extract_city_id(self, html: str) -> None:
         """Try to extract currentCityId from response HTML.
@@ -243,7 +250,8 @@ class Session:
         """
         match = re.search(r"currentCityId:\s*(\d+)", html)
         if match:
-            self._current_city_id = match.group(1)
+            with self._city_lock:
+                self._current_city_id = match.group(1)
 
     # ------------------------------------------------------------------
     # Rate limiting (Phase 5.1)
@@ -342,7 +350,8 @@ class Session:
             "http": proxy_url,
             "https": proxy_url,
         })
-        self._proxy_active = True
+        with self._proxy_lock:
+            self._proxy_active = True
         self._proxy_config = proxy_config
         logger.info("Proxy activated: %s:%s", host, port)
 
@@ -354,7 +363,8 @@ class Session:
     def deactivate_proxy(self) -> None:
         """Remove proxy from the session."""
         self.s.proxies.clear()
-        self._proxy_active = False
+        with self._proxy_lock:
+            self._proxy_active = False
         logger.info("Proxy deactivated")
 
     # ------------------------------------------------------------------
@@ -364,7 +374,8 @@ class Session:
     def setStatus(self, status: str) -> None:
         """Set a status message for the current operation.
 
-        Logged and (in the future) displayed in the UI.
+        Logged and, when running as a background process, written to
+        the process list file so the parent menu can display it.
 
         Parameters
         ----------
@@ -373,6 +384,9 @@ class Session:
         """
         self._status = status
         logger.info("Status: %s", status)
+        if not self.is_parent:
+            from autoIkabot.utils.process import update_process_status
+            update_process_status(self, status)
 
     def logout(self) -> None:
         """Close the session (cleanup)."""
@@ -611,8 +625,10 @@ class Session:
         params_original = dict(params)
 
         # Get CSRF token — use cached if available, otherwise fetch
-        if self._action_request_token:
-            token = self._action_request_token
+        with self._token_lock:
+            cached_token = self._action_request_token
+        if cached_token:
+            token = cached_token
         else:
             token = self._extract_token()
 

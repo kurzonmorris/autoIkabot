@@ -154,13 +154,24 @@ def readResourceAmount(resource_name):
 # Main entry point (called by the menu system)
 # ---------------------------------------------------------------------------
 
-def resourceTransportManager(session):
-    """Resource Transport Manager — main entry point.
+def resourceTransportManager(session, event, stdin_fd):
+    """Resource Transport Manager — background module entry point.
+
+    Spawned as a child process by the menu's background dispatch.
+    Handles the interactive config phase, then signals the parent and
+    continues running the shipment loop in the background.
 
     Parameters
     ----------
     session : autoIkabot.web.session.Session
+    event : multiprocessing.Event
+        Signalled after config is done to return control to menu.
+    stdin_fd : int
+        File descriptor for stdin from the parent process.
     """
+    import sys
+    sys.stdin = os.fdopen(stdin_fd)
+
     try:
         telegram_enabled = checkTelegramData(session)
         if telegram_enabled is False:
@@ -169,6 +180,7 @@ def resourceTransportManager(session):
             print("Do you want to continue without notifications? [Y/n]")
             rta = read(values=["y", "Y", "n", "N", ""])
             if rta.lower() == "n":
+                event.set()
                 return
             telegram_enabled = None
 
@@ -181,17 +193,42 @@ def resourceTransportManager(session):
         print("(') Back to main menu")
         shipping_mode = read(min=1, max=3, digit=True, additionalValues=["'"])
         if shipping_mode == "'":
+            event.set()
             return
 
         if shipping_mode == 1:
-            consolidateMode(session, telegram_enabled)
+            config = consolidateMode(session, telegram_enabled)
         elif shipping_mode == 2:
-            distributeMode(session, telegram_enabled)
+            config = distributeMode(session, telegram_enabled)
         else:
-            evenDistributionMode(session, telegram_enabled)
+            config = evenDistributionMode(session, telegram_enabled)
+
+        if config is None:
+            # User cancelled during config
+            event.set()
+            return
+
+        # --- Hand off: config done, switch to background ---
+        from autoIkabot.utils.process import set_child_mode
+        set_child_mode(session)
+        event.set()
+
+        # --- Background phase: no user interaction from here ---
+        info = config["info"]
+        logger.info(info.strip())
+        try:
+            config["run_func"]()
+        except Exception:
+            msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
+            sendToBot(session, msg)
+            logger.exception("Error in resourceTransportManager background phase")
 
     except KeyboardInterrupt:
+        event.set()
         return
+    except Exception:
+        event.set()
+        raise
 
 
 def consolidateMode(session, telegram_enabled):
@@ -626,14 +663,11 @@ def consolidateMode(session, telegram_enabled):
         return
 
     info = f"\nAuto-send resources from {source_cities_summary} to {destination_city['name']} every {interval_hours} hour(s)\n"
-    logger.info(info.strip())
 
-    try:
-        do_it(session, origin_cities, destination_city, island, interval_hours, resource_config, useFreighters, send_mode, telegram_enabled, notify_on_start)
-    except Exception:
-        msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
-        sendToBot(session, msg)
-        logger.exception("Error in consolidateMode")
+    return {
+        "info": info,
+        "run_func": lambda: do_it(session, origin_cities, destination_city, island, interval_hours, resource_config, useFreighters, send_mode, telegram_enabled, notify_on_start),
+    }
 
 
 def distributeMode(session, telegram_enabled):
@@ -821,14 +855,11 @@ def distributeMode(session, telegram_enabled):
         return
 
     info = f"\nDistribute resources from {origin_city['name']} to {len(destination_cities)} cities every {interval_hours} hour(s)\n"
-    logger.info(info.strip())
 
-    try:
-        do_it_distribute(session, origin_city, destination_cities, interval_hours, resource_config, useFreighters, telegram_enabled, notify_on_start)
-    except Exception:
-        msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
-        sendToBot(session, msg)
-        logger.exception("Error in distributeMode")
+    return {
+        "info": info,
+        "run_func": lambda: do_it_distribute(session, origin_city, destination_cities, interval_hours, resource_config, useFreighters, telegram_enabled, notify_on_start),
+    }
 
 
 def evenDistributionMode(session, telegram_enabled):
@@ -891,14 +922,11 @@ def evenDistributionMode(session, telegram_enabled):
         return
 
     info = "\nDistribute {}\n".format(MATERIALS_NAMES[resource])
-    logger.info(info.strip())
 
-    try:
-        executeRoutes(session, routes, useFreighters)
-    except Exception:
-        msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
-        sendToBot(session, msg)
-        logger.exception("Error in evenDistributionMode")
+    return {
+        "info": info,
+        "run_func": lambda: executeRoutes(session, routes, useFreighters),
+    }
 
 
 def distribute_evenly(session, resource_type, cities_ids, cities):
@@ -1224,7 +1252,6 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
             source_cities_names = ', '.join([city['name'] for city in origin_cities])
             print(f"\n  One-time shipment complete! ({total_shipments} shipments sent)")
             session.setStatus(f"One-time shipment completed: {source_cities_names} -> {destination_city['name']}")
-            enter()
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)
@@ -1450,7 +1477,6 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
             dest_names = ', '.join([city['name'] for city in destination_cities])
             print(f"\n  One-time distribution complete! ({total_shipments} shipments sent)")
             session.setStatus(f"One-time distribution completed: {origin_city['name']} -> {dest_names}")
-            enter()
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)

@@ -4,8 +4,13 @@
 Initializes the debug logging system, presents the account selection UI,
 runs the login flow, creates a game session, registers modules, and
 enters the main menu loop.
+
+Background modules are spawned as child processes. When the user exits
+the menu, the parent process terminates while children continue running.
 """
 
+import multiprocessing
+import os
 import sys
 
 from autoIkabot.config import DATA_DIR, DEBUG_DIR, VERSION
@@ -118,7 +123,21 @@ def main() -> None:
             func=importExportCookie,
         )
 
-        # Transport modules (Phase 4)
+        # Kill Tasks module (Settings)
+        from autoIkabot.modules.killTasks import (
+            killTasks,
+            MODULE_NAME as KILL_NAME,
+            MODULE_SECTION as KILL_SECTION,
+            MODULE_NUMBER as KILL_NUMBER,
+            MODULE_DESCRIPTION as KILL_DESC,
+        )
+        register_module(
+            name=KILL_NAME, section=KILL_SECTION,
+            number=KILL_NUMBER, description=KILL_DESC,
+            func=killTasks,
+        )
+
+        # Transport modules (Phase 4) — runs in background
         from autoIkabot.modules.resourceTransportManager import (
             resourceTransportManager,
             MODULE_NAME as RTM_NAME,
@@ -130,6 +149,7 @@ def main() -> None:
             name=RTM_NAME, section=RTM_SECTION,
             number=RTM_NUMBER, description=RTM_DESC,
             func=resourceTransportManager,
+            background=True,
         )
 
         # Monitoring modules (Phase 5.2)
@@ -148,10 +168,23 @@ def main() -> None:
 
         run_menu(session)
 
+        # User chose Exit — check for background tasks
+        from autoIkabot.utils.process import update_process_list
+        process_list = update_process_list(session)
+        if process_list:
+            print(f"\n  {len(process_list)} background task(s) still running.")
+            print("  They will continue in the background.")
+            print("  Run autoIkabot again to manage them.")
+
+        session.logout()
+        logger.info("Parent process exiting, children will continue.")
+        # os._exit() kills only this process — child processes survive on Unix
+        os._exit(0)
+
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C).")
         print("\nExiting.")
-        sys.exit(0)
+        os._exit(0)
     except Exception:
         logger.exception("Unhandled exception in main")
         raise
@@ -207,4 +240,6 @@ def _update_cached_tokens(account_info, login_result, logger):
 
 
 if __name__ == "__main__":
+    # Required for multiprocessing on Windows
+    multiprocessing.freeze_support()
     main()
