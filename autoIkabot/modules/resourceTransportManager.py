@@ -1120,12 +1120,14 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                 lock_acquired = False
 
                 while retry_count < max_retries and not lock_acquired:
+                    print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
                     session.setStatus(
                         f"{origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
                     )
 
                     if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
                         lock_acquired = True
+                        print(f"    Lock acquired.")
                     else:
                         retry_count += 1
                         print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying...")
@@ -1344,12 +1346,14 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                 lock_acquired = False
 
                 while retry_count < max_retries and not lock_acquired:
+                    print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
                     session.setStatus(
                         f"{origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
                     )
 
                     if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
                         lock_acquired = True
+                        print(f"    Lock acquired.")
                     else:
                         retry_count += 1
                         print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying...")
