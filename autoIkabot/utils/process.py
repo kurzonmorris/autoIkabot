@@ -3,6 +3,13 @@
 Provides the infrastructure for spawning modules as child processes,
 tracking them in a JSON file, and managing their lifecycle.
 
+Platform notes:
+  - Linux/Mac: Child processes survive after the parent exits or the
+    terminal is closed. They are adopted by init (PID 1).
+  - Windows: Child processes are killed when the terminal window is
+    closed. They only survive while autoIkabot (or the terminal) is
+    still open.
+
 Based on ikabot's helpers/process.py + helpers/signals.py, adapted
 for autoIkabot's architecture.
 """

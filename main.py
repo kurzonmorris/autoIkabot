@@ -172,8 +172,15 @@ def main() -> None:
         from autoIkabot.utils.process import update_process_list
         process_list = update_process_list(session)
         if process_list:
-            print(f"\n  {len(process_list)} background task(s) still running.")
-            print("  They will continue in the background.")
+            count = len(process_list)
+            print(f"\n  {count} background task(s) still running.")
+            if os.name == "nt":
+                print("  WARNING (Windows): Background tasks will be killed")
+                print("  if you close this terminal window. Keep it open for")
+                print("  tasks to continue running.")
+            else:
+                print("  (Linux/Mac): Tasks will continue running even after")
+                print("  you close the terminal.")
             print("  Run autoIkabot again to manage them.")
 
         session.logout()
