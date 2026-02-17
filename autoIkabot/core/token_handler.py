@@ -118,10 +118,12 @@ def _prompt_manual(is_interactive: bool) -> str:
 
     print("\n  Automatic blackbox token generation failed.")
     print("  You can extract one from your browser:")
-    print("    1. Open browser dev tools (F12) on the Ikariam lobby page")
-    print("    2. Go to the Network tab")
-    print("    3. Log in normally and look for the POST to 'sessions'")
-    print("    4. In the request body, find the 'blackbox' field")
+    print("    1. Open browser dev tools (F12) and go to the Network tab")
+    print("    2. Log in to the Ikariam lobby (it appears as you log in,")
+    print("       not when simply loading the page)")
+    print("    3. Filter for 'sessions' — look for the POST request to:")
+    print("       https://spark-web.gameforge.com/api/v2/authProviders/mauth/sessions")
+    print("    4. In the request body/payload, find the 'blackbox' field")
     print("    5. Copy the full value (starts with 'tra:')")
 
     token = read_input("Blackbox token: ").strip()

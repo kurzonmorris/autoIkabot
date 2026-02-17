@@ -11,12 +11,14 @@ Returns a dict with everything needed for Phase 2 (login).
 
 from typing import Any, Dict, List, Optional
 
+from autoIkabot.config import ACCOUNTS_FILE
 from autoIkabot.data.account_store import (
     accounts_file_exists,
     load_accounts,
     save_accounts,
     add_account,
     remove_account,
+    edit_account,
     list_accounts_summary,
     Account,
 )
@@ -188,6 +190,14 @@ def _add_new_account_flow(
     print("\n  -- Blackbox Token (device fingerprint) --")
     print("  This is a device fingerprint (starts with 'tra:') sent during auth.")
     print("  It typically stays the same per account for years.")
+    print("  To get it manually:")
+    print("    1. Open browser dev tools (F12) and go to the Network tab")
+    print("    2. Log in to the Ikariam lobby (it appears as you log in,")
+    print("       not when simply loading the page)")
+    print("    3. Filter for 'sessions' — look for the POST request to:")
+    print("       https://spark-web.gameforge.com/api/v2/authProviders/mauth/sessions")
+    print("    4. In the request body/payload, find the 'blackbox' field")
+    print("    5. Copy the full value (starts with 'tra:')")
     print("  If you have one, paste it now. Otherwise leave blank and")
     print("  it will be fetched automatically during login.")
     blackbox_token = read_input("Blackbox token (leave blank to skip): ")
@@ -211,6 +221,90 @@ def _add_new_account_flow(
         "proxy": None,
         "proxy_auto": False,
     }
+
+
+def _edit_account_flow(
+    accounts: List[Account], index: int, master_password: str
+) -> None:
+    """Interactive flow to edit an existing account's fields.
+
+    Parameters
+    ----------
+    accounts : List[Account]
+        The accounts list (modified in place).
+    index : int
+        Zero-based index of the account to edit.
+    master_password : str
+        For re-saving the encrypted file after editing.
+    """
+    acct = accounts[index]
+    print(f"\n--- Edit Account: {acct.get('email', '?')} ---")
+    print("  Press Enter to keep the current value.\n")
+
+    email = read_input(f"  Email [{acct.get('email', '')}]: ").strip()
+    password = read_password(f"  Password [{'****' if acct.get('password') else '(empty)'}]: ")
+    servers_input = read_input(
+        f"  Servers [{', '.join(acct.get('servers', []))}]: "
+    ).strip()
+    gf_token = read_input(
+        f"  gf-token [{acct.get('gf_token', '')[:8] + '...' if acct.get('gf_token') else '(empty)'}]: "
+    ).strip()
+    blackbox_token = read_input(
+        f"  Blackbox token [{acct.get('blackbox_token', '')[:20] + '...' if acct.get('blackbox_token') else '(empty)'}]: "
+    ).strip()
+
+    # Build updates dict — only include fields the user actually changed
+    updates = {}
+    if email:
+        updates["email"] = email
+    if password:
+        updates["password"] = password
+    if servers_input:
+        new_servers = [s.strip() for s in servers_input.split(",") if s.strip()]
+        updates["servers"] = new_servers
+        updates["default_server"] = new_servers[0] if new_servers else ""
+    if gf_token:
+        if gf_token.startswith("gf-token-production="):
+            gf_token = gf_token[len("gf-token-production="):]
+        updates["gf_token"] = gf_token
+    if blackbox_token:
+        if not blackbox_token.startswith("tra:"):
+            blackbox_token = "tra:" + blackbox_token
+        updates["blackbox_token"] = blackbox_token
+
+    if not updates:
+        print("  No changes made.")
+        return
+
+    edit_account(accounts, index, **updates)
+    save_accounts(accounts, master_password)
+    print("  Account updated and saved.")
+
+
+def _delete_all_data_flow() -> bool:
+    """Delete the encrypted accounts file so the user can start fresh.
+
+    Returns
+    -------
+    bool
+        True if the file was deleted, False if the user cancelled.
+    """
+    print("\n  WARNING: This will permanently delete ALL saved accounts")
+    print("  and your master password. You will need to set up everything")
+    print("  from scratch.")
+    if not read_yes_no("Are you sure?", default=False):
+        return False
+    if not read_yes_no("This CANNOT be undone. Really delete everything?", default=False):
+        return False
+
+    try:
+        ACCOUNTS_FILE.unlink(missing_ok=True)
+        print("  All account data deleted. You can now set a new master password.")
+        return True
+    except OSError as e:
+        logger.error("Failed to delete accounts file: %s", e)
+        print(f"  ERROR: Could not delete the file: {e}")
+        return False
 
 
 def _stored_mode_flow() -> Optional[Dict[str, Any]]:
@@ -246,11 +340,13 @@ def _stored_mode_flow() -> Optional[Dict[str, Any]]:
             _display_accounts_list(accounts)
             n = len(accounts)
             print(f"  {n + 1}. Add new account")
-            print(f"  {n + 2}. Remove an account")
+            print(f"  {n + 2}. Edit an account")
+            print(f"  {n + 3}. Remove an account")
+            print(f"  {n + 4}. Delete all data & reset password")
             print(f"  0. Back to mode selection")
             print()
 
-            choice = read_choice("Select: ", min_val=0, max_val=n + 2)
+            choice = read_choice("Select: ", min_val=0, max_val=n + 4)
 
             if choice == 0:
                 return None
@@ -280,6 +376,14 @@ def _stored_mode_flow() -> Optional[Dict[str, Any]]:
                 continue
 
             elif choice == n + 2:
+                # Edit an account
+                edit_choice = read_choice(
+                    "Account number to edit: ", min_val=1, max_val=n
+                )
+                _edit_account_flow(accounts, edit_choice - 1, master_password)
+                continue
+
+            elif choice == n + 3:
                 # Remove an account
                 rm_choice = read_choice(
                     "Account number to remove: ", min_val=1, max_val=n
@@ -292,6 +396,14 @@ def _stored_mode_flow() -> Optional[Dict[str, Any]]:
                     remove_account(accounts, rm_choice - 1)
                     save_accounts(accounts, master_password)
                     print("  Account removed.")
+                continue
+
+            elif choice == n + 4:
+                # Delete all data & reset password
+                if _delete_all_data_flow():
+                    # File deleted — break out so _stored_mode_flow restarts
+                    # from the caller's while loop (run_account_selection)
+                    return None
                 continue
         else:
             # No accounts yet — prompt to add one
