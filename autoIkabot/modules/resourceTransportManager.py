@@ -1,4 +1,4 @@
-"""Resource Transport Manager v1.1 — autoIkabot module.
+"""Resource Transport Manager v1.2 — autoIkabot module.
 
 Four shipping modes:
   1. Consolidate: Multiple source cities -> One destination
@@ -44,7 +44,7 @@ def print_module_banner(mode_name=None, mode_description=None):
     """Print the Resource Transport Manager banner."""
     print("\n")
     print("+" + "=" * 58 + "+")
-    print("|       RESOURCE TRANSPORT MANAGER v1.1" + " " * 20 + "|")
+    print("|       RESOURCE TRANSPORT MANAGER v1.2" + " " * 20 + "|")
 
     if mode_name:
         print("|" + "-" * 58 + "|")
