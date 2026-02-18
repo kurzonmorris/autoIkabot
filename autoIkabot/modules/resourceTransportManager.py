@@ -1,9 +1,10 @@
-"""Resource Transport Manager v1.0 — autoIkabot module.
+"""Resource Transport Manager v1.1 — autoIkabot module.
 
-Three shipping modes:
+Four shipping modes:
   1. Consolidate: Multiple source cities -> One destination
   2. Distribute: One source city -> Multiple destinations
   3. Even Distribution: Balance one resource across all cities
+  4. Auto Send: Request specific amounts, auto-collect from all cities
 
 Originally written for ikabot, refactored for autoIkabot's module system.
 """
@@ -43,7 +44,7 @@ def print_module_banner(mode_name=None, mode_description=None):
     """Print the Resource Transport Manager banner."""
     print("\n")
     print("+" + "=" * 58 + "+")
-    print("|       RESOURCE TRANSPORT MANAGER v1.0" + " " * 20 + "|")
+    print("|       RESOURCE TRANSPORT MANAGER v1.1" + " " * 20 + "|")
 
     if mode_name:
         print("|" + "-" * 58 + "|")
@@ -191,8 +192,9 @@ def resourceTransportManager(session, event, stdin_fd):
         print("(1) Consolidate/Single Shipments: Multiple cities -> One destination")
         print("(2) Distribute: One city -> Multiple destinations")
         print("(3) Even Distribution: Balance one resource across all cities")
+        print("(4) Auto Send: Request resources and auto-collect from all cities")
         print("(') Back to main menu")
-        shipping_mode = read(min=1, max=3, digit=True, additionalValues=["'"])
+        shipping_mode = read(min=1, max=4, digit=True, additionalValues=["'"])
         if shipping_mode == "'":
             event.set()
             return
@@ -201,8 +203,10 @@ def resourceTransportManager(session, event, stdin_fd):
             config = consolidateMode(session, telegram_enabled)
         elif shipping_mode == 2:
             config = distributeMode(session, telegram_enabled)
-        else:
+        elif shipping_mode == 3:
             config = evenDistributionMode(session, telegram_enabled)
+        else:
+            config = autoSendMode(session, telegram_enabled)
 
         if config is None:
             # User cancelled during config
@@ -1049,6 +1053,422 @@ def distribute_evenly(session, resource_type, cities_ids, cities):
                 originCities[originCityID] = 0
 
     return routes
+
+
+# ---------------------------------------------------------------------------
+# Mode 4 — Auto Send
+# ---------------------------------------------------------------------------
+
+def autoSendMode(session, telegram_enabled):
+    """Auto Send: request specific amounts, pull from all cities."""
+    try:
+        print_module_banner("Auto Send", "Request resources and auto-collect from all cities")
+
+        print("What type of ships do you want to use?")
+        print("(1) Merchant ships")
+        print("(2) Freighters")
+        print("(') Exit to main menu")
+        shiptype = read(min=1, max=2, digit=True, additionalValues=["'"])
+        if shiptype == "'":
+            return
+        useFreighters = (shiptype == 2)
+
+        while True:
+            # --- Destination selection ---
+            print_module_banner("Auto Send", "Select destination city")
+            print("Select the city you want to send resources TO:")
+            destination_city = chooseCity(session)
+
+            # Fetch island data for destination (needed for route tuples)
+            html = session.get(ISLAND_URL + destination_city["islandId"])
+            destination_island = getIsland(html)
+
+            # --- Fetch all cities and compute totals ---
+            print_module_banner("Auto Send", "Scanning cities...")
+            city_ids, _ = getIdsOfCities(session)
+
+            suppliers = []
+            totals = [0] * len(MATERIALS_NAMES)
+
+            for city_id in city_ids:
+                if str(city_id) == str(destination_city["id"]):
+                    continue
+                html = session.get(CITY_URL + str(city_id))
+                city_data = getCity(html)
+                suppliers.append(city_data)
+                for i in range(len(MATERIALS_NAMES)):
+                    totals[i] += city_data["availableResources"][i]
+
+            if len(suppliers) == 0:
+                print("Error: No supplier cities available (destination is your only city).")
+                enter()
+                return
+
+            print_module_banner("Auto Send", "Available resources")
+            print(f"  Destination: {destination_city['name']} [{destination_island['x']}:{destination_island['y']}]")
+            print("")
+            print("  Total available resources (excluding destination):")
+            print(f"    {'Resource':<12} {'Available':>12}")
+            print(f"    {'-'*12} {'-'*12}")
+            for i, resource in enumerate(MATERIALS_NAMES):
+                print(f"    {resource:<12} {addThousandSeparator(totals[i]):>12}")
+            print("")
+
+            # --- Resource request input ---
+            while True:
+                print("  Enter how much of each resource you want to collect:")
+                print("  (Leave blank to skip, ' to exit, = to restart)")
+                print("")
+
+                requested = [0] * len(MATERIALS_NAMES)
+                restart = False
+                for i, resource in enumerate(MATERIALS_NAMES):
+                    result = readResourceAmount(resource)
+                    if result == 'EXIT':
+                        return
+                    if result == 'RESTART':
+                        restart = True
+                        break
+                    if result is None or result == 0:
+                        requested[i] = 0
+                    else:
+                        requested[i] = result
+
+                if restart:
+                    break  # break inner loop, continue outer (re-select destination)
+
+                if sum(requested) == 0:
+                    print("\n  No resources requested. Nothing to do.")
+                    enter()
+                    return
+
+                # Validate against available totals
+                over_limit = []
+                for i in range(len(MATERIALS_NAMES)):
+                    if requested[i] > totals[i]:
+                        over_limit.append(
+                            f"    {MATERIALS_NAMES[i]}: requested {addThousandSeparator(requested[i])}, "
+                            f"available {addThousandSeparator(totals[i])}"
+                        )
+
+                if over_limit:
+                    print("\n  ERROR: Requested amounts exceed available resources:")
+                    for line in over_limit:
+                        print(line)
+                    print("\n  Please re-enter resource amounts.\n")
+                    continue  # re-prompt resource input
+
+                # --- Allocate and review ---
+                routes = allocate_from_suppliers(requested, suppliers, destination_city, destination_island)
+
+                if routes is None:
+                    print("\n  ERROR: Could not allocate resources across suppliers.")
+                    enter()
+                    return
+
+                ship_capacity, freighter_capacity = getShipCapacity(session)
+                capacity = freighter_capacity if useFreighters else ship_capacity
+
+                choice = render_auto_send_review(
+                    destination_city, destination_island, routes, useFreighters, capacity
+                )
+
+                if choice == "C":
+                    return
+                elif choice == "E":
+                    break  # break inner loop, continue outer (re-select destination)
+                else:
+                    # Y — proceed
+                    info = f"\nAuto-send resources to {destination_city['name']}\n"
+                    return {
+                        "info": info,
+                        "run_func": lambda: do_it_auto_send(
+                            session, routes, useFreighters, telegram_enabled
+                        ),
+                    }
+            # If we broke out of inner loop (restart/edit), continue outer while True
+
+    except KeyboardInterrupt:
+        return
+
+
+def allocate_from_suppliers(requested, suppliers, destination_city, destination_island):
+    """Allocate requested resources across supplier cities.
+
+    Parameters
+    ----------
+    requested : list[int]
+        Five-element list of requested amounts per resource.
+    suppliers : list[dict]
+        List of city data dicts (from getCity).
+    destination_city : dict
+        The destination city data.
+    destination_island : dict
+        The destination island data.
+
+    Returns
+    -------
+    list[tuple] or None
+        List of route tuples for executeRoutes(), or None if allocation impossible.
+    """
+    remaining = list(requested)
+    routes = []
+
+    for supplier in suppliers:
+        to_send = [0] * len(MATERIALS_NAMES)
+        has_cargo = False
+
+        for i in range(len(MATERIALS_NAMES)):
+            if remaining[i] <= 0:
+                continue
+            can_give = supplier["availableResources"][i]
+            give = min(remaining[i], can_give)
+            to_send[i] = give
+            remaining[i] -= give
+            if give > 0:
+                has_cargo = True
+
+        if has_cargo:
+            route = (
+                supplier,
+                destination_city,
+                destination_island["id"],
+                *to_send,
+            )
+            routes.append(route)
+
+        if all(r <= 0 for r in remaining):
+            break
+
+    if any(r > 0 for r in remaining):
+        return None
+
+    return routes
+
+
+def render_auto_send_review(destination_city, destination_island, routes, useFreighters, capacity):
+    """Display the shipment plan for user review.
+
+    Parameters
+    ----------
+    destination_city : dict
+    destination_island : dict
+    routes : list[tuple]
+    useFreighters : bool
+    capacity : int
+        Per-ship cargo capacity.
+
+    Returns
+    -------
+    str
+        User choice: 'Y', 'E', or 'C'.
+    """
+    ship_type_name = "Freighters" if useFreighters else "Merchant ships"
+
+    print_module_banner("Auto Send", "Review Shipment Plan")
+    print(f"  Destination: {destination_city['name']} [{destination_island['x']}:{destination_island['y']}]")
+    print(f"  Ship type:   {ship_type_name} (capacity: {addThousandSeparator(capacity)})")
+    print("")
+    print("  Planned Shipments:")
+    print(f"  {'#':<4} {'From':<18}", end="")
+    for resource in MATERIALS_NAMES:
+        print(f" {resource:>9}", end="")
+    print(f" {'Ships':>7}")
+    print(f"  {'--':<4} {'------------------':<18}", end="")
+    for _ in MATERIALS_NAMES:
+        print(f" {'---------':>9}", end="")
+    print(f" {'-------':>7}")
+
+    grand_totals = [0] * len(MATERIALS_NAMES)
+    total_ships = 0
+
+    for idx, route in enumerate(routes):
+        origin = route[0]
+        amounts = route[3:]
+        total_cargo = sum(amounts)
+        ships_needed = math.ceil(total_cargo / capacity) if capacity > 0 else 0
+
+        name = origin["name"]
+        if len(name) > 18:
+            name = name[:15] + "..."
+
+        print(f"  {idx + 1:<4} {name:<18}", end="")
+        for i in range(len(MATERIALS_NAMES)):
+            val = amounts[i] if i < len(amounts) else 0
+            grand_totals[i] += val
+            if val > 0:
+                print(f" {addThousandSeparator(val):>9}", end="")
+            else:
+                print(f" {'0':>9}", end="")
+        print(f" {ships_needed:>7}")
+        total_ships += ships_needed
+
+    print(f"  {'--':<4} {'------------------':<18}", end="")
+    for _ in MATERIALS_NAMES:
+        print(f" {'---------':>9}", end="")
+    print(f" {'-------':>7}")
+
+    print(f"  {'':4} {'TOTAL':<18}", end="")
+    for i in range(len(MATERIALS_NAMES)):
+        print(f" {addThousandSeparator(grand_totals[i]):>9}", end="")
+    print(f" {total_ships:>7}")
+    print("")
+
+    print("  (Y) Proceed with shipments")
+    print("  (E) Edit — re-select destination and amounts")
+    print("  (C) Cancel — return to main menu")
+    choice = read(values=["y", "Y", "e", "E", "c", "C", ""])
+    if choice == "" or choice.upper() == "Y":
+        return "Y"
+    elif choice.upper() == "E":
+        return "E"
+    else:
+        return "C"
+
+
+def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
+    """Execute auto-send shipments (one-shot, per-route locking).
+
+    Parameters
+    ----------
+    session : Session
+    routes : list[tuple]
+    useFreighters : bool
+    telegram_enabled : bool or None
+    """
+    ship_type_name = "freighters" if useFreighters else "merchant ships"
+    total_routes = len(routes)
+    completed = 0
+
+    print(f"\n--- Auto Send: executing {total_routes} shipments ---\n")
+
+    for route_index, route in enumerate(routes):
+        origin_city = route[0]
+        destination_city = route[1]
+        amounts = route[3:]
+        total_cargo = sum(amounts)
+
+        resources_desc = ", ".join(
+            f"{addThousandSeparator(amounts[i])} {MATERIALS_NAMES[i]}"
+            for i in range(len(MATERIALS_NAMES)) if i < len(amounts) and amounts[i] > 0
+        )
+
+        print(f"  [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']}")
+        print(f"    Resources: {resources_desc}")
+
+        # Wait for ships
+        session.setStatus(
+            f"Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type_name}..."
+        )
+        ship_check_start = time.time()
+
+        while True:
+            if useFreighters:
+                available_ships = getAvailableFreighters(session)
+            else:
+                available_ships = getAvailableShips(session)
+
+            if available_ships > 0:
+                print(f"    Found {available_ships} {ship_type_name}")
+                break
+            else:
+                elapsed = int(time.time() - ship_check_start)
+                print(f"    Waiting for {ship_type_name}... (checked for {elapsed}s)")
+                session.setStatus(
+                    f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for {ship_type_name} ({elapsed}s)..."
+                )
+                time.sleep(120)
+
+        # Acquire shipping lock
+        max_retries = 3
+        retry_count = 0
+        lock_acquired = False
+
+        while retry_count < max_retries and not lock_acquired:
+            print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
+            session.setStatus(
+                f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for shipping lock..."
+            )
+            if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
+                lock_acquired = True
+                print(f"    Lock acquired.")
+            else:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying in 60s...")
+                    time.sleep(60)
+
+        if not lock_acquired:
+            error_msg = f"Could not acquire shipping lock after {max_retries} attempts"
+            print(f"    FAILED: {error_msg}")
+            if telegram_enabled:
+                msg = (
+                    f"AUTO SEND FAILED\n"
+                    f"Account: {session.username}\n"
+                    f"Route [{route_index + 1}/{total_routes}]: {origin_city['name']} -> {destination_city['name']}\n"
+                    f"Error: {error_msg}\n"
+                    f"Completed: {completed}/{total_routes}\n"
+                    f"Suggestion: Run Auto Send again for remaining resources"
+                )
+                sendToBot(session, msg)
+            break
+
+        try:
+            # Verify ships still available
+            if useFreighters:
+                ships_before = getAvailableFreighters(session)
+            else:
+                ships_before = getAvailableShips(session)
+
+            if ships_before == 0:
+                print(f"    Ships became unavailable, stopping")
+                if telegram_enabled:
+                    msg = (
+                        f"AUTO SEND STOPPED\n"
+                        f"Account: {session.username}\n"
+                        f"Route [{route_index + 1}/{total_routes}]: {origin_city['name']} -> {destination_city['name']}\n"
+                        f"Problem: Ships became unavailable\n"
+                        f"Completed: {completed}/{total_routes}"
+                    )
+                    sendToBot(session, msg)
+                break
+
+            session.setStatus(
+                f"Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Sending..."
+            )
+
+            executeRoutes(session, [route], useFreighters)
+            completed += 1
+            print(f"    SUCCESS ({completed}/{total_routes})")
+
+            if telegram_enabled:
+                msg = (
+                    f"Auto Send [{completed}/{total_routes}]\n"
+                    f"{origin_city['name']} -> {destination_city['name']}\n"
+                    f"Resources: {resources_desc}\n"
+                    f"Status: Sent"
+                )
+                sendToBot(session, msg)
+
+        except Exception as send_error:
+            error_msg = str(send_error)
+            print(f"    FAILED: {error_msg}")
+            if telegram_enabled:
+                msg = (
+                    f"AUTO SEND FAILED\n"
+                    f"Account: {session.username}\n"
+                    f"Route [{route_index + 1}/{total_routes}]: {origin_city['name']} -> {destination_city['name']}\n"
+                    f"Error: {error_msg}\n"
+                    f"Completed: {completed}/{total_routes}\n"
+                    f"Suggestion: Run Auto Send again for remaining resources"
+                )
+                sendToBot(session, msg)
+            break
+        finally:
+            release_shipping_lock(session, use_freighters=useFreighters)
+
+    print(f"\n--- Auto Send complete: {completed}/{total_routes} shipments sent ---")
+    session.setStatus(f"Auto Send complete: {completed}/{total_routes} to {destination_city['name']}")
 
 
 def do_it(session, origin_cities, destination_city, island, interval_hours, resource_config, useFreighters, send_mode, telegram_enabled, notify_on_start):
