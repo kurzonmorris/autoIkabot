@@ -130,6 +130,63 @@ class Session:
         )
 
     # ------------------------------------------------------------------
+    # Pickling support (Windows multiprocessing uses spawn)
+    # ------------------------------------------------------------------
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Prepare session state for pickling.
+
+        Strips unpicklable objects (locks, threads, events, requests.Session)
+        and serializes HTTP state as cookies + headers so they can be
+        reconstructed in the child process.
+        """
+        state = self.__dict__.copy()
+
+        # Serialize the requests.Session as portable data
+        http_session = state.pop("s")
+        state["_pickled_cookies"] = dict(http_session.cookies)
+        state["_pickled_headers"] = dict(http_session.headers)
+
+        # Remove all threading primitives (reconstructed in __setstate__)
+        for key in [
+            "_health_thread", "_health_stop",
+            "_token_lock", "_rate_lock", "_city_lock", "_proxy_lock",
+        ]:
+            state.pop(key, None)
+
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore session state after unpickling.
+
+        Rebuilds the requests.Session from serialized cookies/headers
+        and recreates all threading primitives.
+        """
+        # Extract serialized HTTP data
+        cookies = state.pop("_pickled_cookies")
+        headers = state.pop("_pickled_headers")
+
+        # Restore all plain attributes
+        self.__dict__.update(state)
+
+        # Rebuild requests.Session
+        self.s = requests.Session()
+        self.s.headers.update(headers)
+        for name, value in cookies.items():
+            self.s.cookies.set(name, value)
+
+        # Rebuild threading primitives
+        self._health_thread = None
+        self._health_stop = threading.Event()
+        self._token_lock = threading.Lock()
+        self._rate_lock = threading.Lock()
+        self._city_lock = threading.Lock()
+        self._proxy_lock = threading.Lock()
+
+        # Mark as child process
+        self.is_parent = False
+
+    # ------------------------------------------------------------------
     # Session status checks
     # ------------------------------------------------------------------
 
