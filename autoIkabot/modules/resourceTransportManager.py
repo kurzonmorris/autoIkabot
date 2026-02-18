@@ -28,6 +28,7 @@ from autoIkabot.helpers.routing import executeRoutes
 from autoIkabot.notifications.notify import checkTelegramData, sendToBot
 from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
+from autoIkabot.utils.process import report_critical_error
 
 logger = get_logger(__name__)
 
@@ -222,6 +223,11 @@ def resourceTransportManager(session, event, stdin_fd):
             msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
             sendToBot(session, msg)
             logger.exception("Error in resourceTransportManager background phase")
+            report_critical_error(
+                session,
+                MODULE_NAME,
+                f"Module crashed and stopped.\n{traceback.format_exc().splitlines()[-1]}",
+            )
 
     except KeyboardInterrupt:
         event.set()
@@ -1239,9 +1245,16 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this cycle"
                         sendToBot(session, msg)
 
-                    if consecutive_failures >= 3 and telegram_enabled:
+                    if consecutive_failures >= 3:
                         alert_msg = f"WARNING\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: {consecutive_failures} consecutive shipping failures\nPlease check for issues!"
-                        sendToBot(session, alert_msg)
+                        if telegram_enabled:
+                            sendToBot(session, alert_msg)
+                        report_critical_error(
+                            session,
+                            MODULE_NAME,
+                            f"{consecutive_failures} consecutive shipping failures.\n"
+                            f"{origin_city['name']} -> {destination_city['name']}",
+                        )
             else:
                 print(f"    No resources to send (below threshold or no space)")
                 if telegram_enabled:
@@ -1464,9 +1477,16 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this destination"
                         sendToBot(session, msg)
 
-                    if consecutive_failures >= 3 and telegram_enabled:
+                    if consecutive_failures >= 3:
                         alert_msg = f"WARNING\nAccount: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: {consecutive_failures} consecutive shipping failures\nPlease check for issues!"
-                        sendToBot(session, alert_msg)
+                        if telegram_enabled:
+                            sendToBot(session, alert_msg)
+                        report_critical_error(
+                            session,
+                            MODULE_NAME,
+                            f"{consecutive_failures} consecutive shipping failures.\n"
+                            f"{origin_city['name']} -> {destination_city['name']}",
+                        )
             else:
                 print(f"    No resources to send (insufficient or no space)")
                 if telegram_enabled:

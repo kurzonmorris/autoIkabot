@@ -17,6 +17,7 @@ for autoIkabot's architecture.
 import json
 import os
 import signal
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,42 @@ import psutil
 from autoIkabot.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Stdout/stderr redirect for background child processes
+# ---------------------------------------------------------------------------
+
+class _LogWriter:
+    """File-like object that redirects write() to a logger.
+
+    Installed as sys.stdout / sys.stderr after a background module finishes
+    its interactive config phase.  All subsequent print() output from the
+    module (ship counts, lock status, cycle progress, etc.) goes silently
+    to the per-process log file instead of clobbering the parent's menu.
+    """
+
+    def __init__(self, logger_obj, level):
+        self._logger = logger_obj
+        self._level = level
+        self._buf = ""
+
+    def write(self, text):
+        if not text:
+            return
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line:
+                self._logger.log(self._level, "%s", line)
+
+    def flush(self):
+        if self._buf:
+            self._logger.log(self._level, "%s", self._buf)
+            self._buf = ""
+
+    def isatty(self):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -46,14 +83,24 @@ def set_child_mode(session) -> None:
 
     - Marks session as non-parent (disables interactive prompts)
     - Disables SIGINT so Ctrl+C in the terminal doesn't kill background work
+    - Redirects stdout/stderr to the log file so print() output from the
+      background phase never reaches the parent's terminal
 
     Parameters
     ----------
     session : Session
         The game session object.
     """
+    import logging
+
     session.is_parent = False
     deactivate_sigint()
+
+    # Redirect stdout/stderr to the per-process log file.
+    # After this point, all print() calls go to the log silently.
+    child_logger = get_logger("autoIkabot.background")
+    sys.stdout = _LogWriter(child_logger, logging.INFO)
+    sys.stderr = _LogWriter(child_logger, logging.WARNING)
 
 
 # ---------------------------------------------------------------------------
@@ -202,3 +249,85 @@ def update_process_status(session, status: str) -> None:
         os.replace(tmp_path, filepath)
     except IOError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Critical error reporting (child -> parent)
+# ---------------------------------------------------------------------------
+
+def _get_error_file_path(session) -> str:
+    """Path to the shared critical-error file for this account."""
+    safe_server = session.servidor.replace("/", "_").replace("\\", "_")
+    safe_user = session.username.replace("/", "_").replace("\\", "_")
+    filename = f".autoikabot_errors_{safe_server}_{safe_user}.json"
+    return os.path.join(os.path.expanduser("~"), filename)
+
+
+def report_critical_error(session, module_name: str, message: str) -> None:
+    """Report a critical error from a background module.
+
+    The parent menu checks this file on every render and displays any
+    pending errors to the user with a prompt to return to the menu.
+
+    Parameters
+    ----------
+    session : Session
+    module_name : str
+        Name of the module that hit the error.
+    message : str
+        Human-readable error description.
+    """
+    filepath = _get_error_file_path(session)
+
+    errors: List[Dict[str, Any]] = []
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r") as f:
+                errors = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            errors = []
+
+    errors.append({
+        "pid": os.getpid(),
+        "module": module_name,
+        "message": message,
+        "time": time.time(),
+    })
+
+    tmp_path = filepath + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(errors, f, indent=2)
+        os.replace(tmp_path, filepath)
+    except IOError:
+        pass
+
+
+def read_critical_errors(session) -> List[Dict[str, Any]]:
+    """Read and clear all pending critical errors.
+
+    Called by the parent menu before rendering.
+
+    Returns
+    -------
+    list of dict
+        Each entry: {pid, module, message, time}.
+    """
+    filepath = _get_error_file_path(session)
+
+    if not os.path.exists(filepath):
+        return []
+
+    try:
+        with open(filepath, "r") as f:
+            errors = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return []
+
+    # Clear the file after reading
+    try:
+        os.remove(filepath)
+    except OSError:
+        pass
+
+    return errors if isinstance(errors, list) else []

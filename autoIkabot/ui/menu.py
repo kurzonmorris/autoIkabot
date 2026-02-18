@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from autoIkabot.config import VERSION
 from autoIkabot.ui.prompts import banner, clear_screen, enter, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import update_process_list
+from autoIkabot.utils.process import read_critical_errors, update_process_list
 
 logger = get_logger(__name__)
 
@@ -175,6 +175,22 @@ def run_menu(session) -> None:
         The authenticated game session.
     """
     while True:
+        # Check for critical errors from background modules
+        errors = read_critical_errors(session)
+        if errors:
+            banner()
+            print("!" * 55)
+            print("  BACKGROUND MODULE ERROR(S)")
+            print("!" * 55)
+            print()
+            for err in errors:
+                print(f"  Module: {err.get('module', 'Unknown')}")
+                print(f"  PID:    {err.get('pid', '?')}")
+                for line in err.get("message", "").splitlines():
+                    print(f"    {line}")
+                print()
+            enter()
+
         action_map = _render_menu(session)
 
         all_numbers = list(action_map.keys()) + [0]
@@ -231,7 +247,19 @@ def _child_entry(func, session_data, event, stdin_fd):
     )
 
     session = Session.from_dict(session_data)
-    func(session, event, stdin_fd)
+    try:
+        func(session, event, stdin_fd)
+    except Exception:
+        # Safety net: if a background module crashes without reporting
+        # the error itself, report it here so the parent menu shows it.
+        import traceback
+        from autoIkabot.utils.process import report_critical_error
+        logger.exception("Background module crashed")
+        report_critical_error(
+            session,
+            func.__module__ or "Unknown",
+            f"Module crashed and stopped.\n{traceback.format_exc().splitlines()[-1]}",
+        )
 
 
 def _dispatch_background(session, mod: Dict[str, Any]) -> None:
