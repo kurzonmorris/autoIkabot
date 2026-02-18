@@ -211,6 +211,19 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
         enter()
 
 
+def _child_entry(func, session_data, event, stdin_fd):
+    """Entry point for child processes.
+
+    Reconstructs a Session from the plain dict produced by Session.to_dict(),
+    then calls the module function. This avoids pickling the Session object
+    (which contains unpicklable threading primitives and requests.Session
+    internals that break on Windows/Python 3.13+).
+    """
+    from autoIkabot.web.session import Session
+    session = Session.from_dict(session_data)
+    func(session, event, stdin_fd)
+
+
 def _dispatch_background(session, mod: Dict[str, Any]) -> None:
     """Spawn a module as a background child process.
 
@@ -226,9 +239,11 @@ def _dispatch_background(session, mod: Dict[str, Any]) -> None:
         _dispatch_sync(session, mod)
         return
 
+    session_data = session.to_dict()
+
     process = multiprocessing.Process(
-        target=mod["func"],
-        args=(session, event, stdin_fd),
+        target=_child_entry,
+        args=(mod["func"], session_data, event, stdin_fd),
         name=mod["name"],
     )
     process.start()

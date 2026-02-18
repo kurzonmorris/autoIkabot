@@ -130,61 +130,102 @@ class Session:
         )
 
     # ------------------------------------------------------------------
-    # Pickling support (Windows multiprocessing uses spawn)
+    # Cross-process serialization (factory method)
     # ------------------------------------------------------------------
 
-    def __getstate__(self) -> Dict[str, Any]:
-        """Prepare session state for pickling.
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize session state to a plain dict for cross-process transfer.
 
-        Strips unpicklable objects (locks, threads, events, requests.Session)
-        and serializes HTTP state as cookies + headers so they can be
-        reconstructed in the child process.
+        Used by _dispatch_background() to pass session data to child
+        processes without pickling. The child reconstructs a fresh Session
+        via Session.from_dict().
+
+        Returns
+        -------
+        dict
+            Plain, fully-picklable dict of session state.
         """
-        state = self.__dict__.copy()
+        return {
+            "host": self.host,
+            "url_base": self.url_base,
+            "username": self.username,
+            "mundo": self.mundo,
+            "servidor": self.servidor,
+            "account_id": self.account_id,
+            "account_group": self.account_group,
+            "world_name": self.world_name,
+            "gf_token": self.gf_token,
+            "blackbox_token": self.blackbox_token,
+            "game_headers": dict(self.game_headers),
+            "cookies": dict(self.s.cookies),
+            "proxies": dict(self.s.proxies),
+            "account_info": self._account_info,
+            "action_request_token": self._action_request_token,
+            "current_city_id": self._current_city_id,
+        }
 
-        # Serialize the requests.Session as portable data
-        http_session = state.pop("s")
-        state["_pickled_cookies"] = dict(http_session.cookies)
-        state["_pickled_headers"] = dict(http_session.headers)
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Session":
+        """Reconstruct a Session in a child process from a plain dict.
 
-        # Remove all threading primitives (reconstructed in __setstate__)
-        for key in [
-            "_health_thread", "_health_stop",
-            "_token_lock", "_rate_lock", "_city_lock", "_proxy_lock",
-        ]:
-            state.pop(key, None)
+        Creates a fresh Session with its own requests.Session, threading
+        primitives, and child-process defaults. No pickling involved.
 
-        return state
+        Parameters
+        ----------
+        data : dict
+            Output of to_dict().
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
-        """Restore session state after unpickling.
-
-        Rebuilds the requests.Session from serialized cookies/headers
-        and recreates all threading primitives.
+        Returns
+        -------
+        Session
+            A fully functional Session for use in a child process.
         """
-        # Extract serialized HTTP data
-        cookies = state.pop("_pickled_cookies")
-        headers = state.pop("_pickled_headers")
+        obj = cls.__new__(cls)
 
-        # Restore all plain attributes
-        self.__dict__.update(state)
+        # Plain attributes
+        obj.host = data["host"]
+        obj.url_base = data["url_base"]
+        obj.username = data["username"]
+        obj.mundo = data["mundo"]
+        obj.servidor = data["servidor"]
+        obj.account_id = data["account_id"]
+        obj.account_group = data["account_group"]
+        obj.world_name = data["world_name"]
+        obj.gf_token = data["gf_token"]
+        obj.blackbox_token = data["blackbox_token"]
+        obj.game_headers = data["game_headers"]
+        obj._account_info = data["account_info"]
+        obj._action_request_token = data["action_request_token"]
+        obj._current_city_id = data["current_city_id"]
 
-        # Rebuild requests.Session
-        self.s = requests.Session()
-        self.s.headers.update(headers)
-        for name, value in cookies.items():
-            self.s.cookies.set(name, value)
+        # Build fresh requests.Session
+        obj.s = requests.Session()
+        obj.s.headers.update(data["game_headers"])
+        for name, value in data["cookies"].items():
+            obj.s.cookies.set(name, value)
+        if data["proxies"]:
+            obj.s.proxies.update(data["proxies"])
 
-        # Rebuild threading primitives
-        self._health_thread = None
-        self._health_stop = threading.Event()
-        self._token_lock = threading.Lock()
-        self._rate_lock = threading.Lock()
-        self._city_lock = threading.Lock()
-        self._proxy_lock = threading.Lock()
+        # Fresh threading primitives
+        obj._health_thread = None
+        obj._health_stop = threading.Event()
+        obj._token_lock = threading.Lock()
+        obj._rate_lock = threading.Lock()
+        obj._city_lock = threading.Lock()
+        obj._proxy_lock = threading.Lock()
 
-        # Mark as child process
-        self.is_parent = False
+        # Child process defaults
+        obj.is_parent = False
+        obj.request_history = deque(maxlen=5)
+        obj._last_request_time = 0.0
+        obj._proxy_active = bool(data["proxies"])
+
+        logger.info(
+            "Session reconstructed in child: %s on s%s-%s",
+            obj.username, obj.mundo, obj.servidor,
+        )
+        return obj
 
     # ------------------------------------------------------------------
     # Session status checks
