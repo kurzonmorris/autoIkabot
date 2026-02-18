@@ -217,17 +217,44 @@ def resourceTransportManager(session, event, stdin_fd):
         # --- Background phase: no user interaction from here ---
         info = config["info"]
         logger.info(info.strip())
-        try:
-            config["run_func"]()
-        except Exception:
-            msg = "Error in:\n{}\nCause:\n{}".format(info, traceback.format_exc())
-            sendToBot(session, msg)
-            logger.exception("Error in resourceTransportManager background phase")
-            report_critical_error(
-                session,
-                MODULE_NAME,
-                f"Module crashed and stopped.\n{traceback.format_exc().splitlines()[-1]}",
-            )
+
+        max_restarts = 5
+        restart_count = 0
+        base_wait = 60  # seconds
+
+        while True:
+            try:
+                config["run_func"]()
+                break  # clean exit (one-time shipment finished)
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                restart_count += 1
+                tb = traceback.format_exc()
+                error_summary = tb.splitlines()[-1]
+                logger.exception(
+                    "resourceTransportManager crashed (restart %d/%d)",
+                    restart_count, max_restarts,
+                )
+
+                if restart_count > max_restarts:
+                    msg = (
+                        f"Module crashed and exhausted all {max_restarts} restart attempts.\n"
+                        f"Error in:\n{info}\nCause:\n{error_summary}"
+                    )
+                    sendToBot(session, msg)
+                    report_critical_error(session, MODULE_NAME, msg)
+                    break
+
+                wait_seconds = min(base_wait * (2 ** (restart_count - 1)), 600)
+                msg = (
+                    f"Module crashed (attempt {restart_count}/{max_restarts}).\n"
+                    f"Error: {error_summary}\n"
+                    f"Auto-restarting in {wait_seconds}s..."
+                )
+                sendToBot(session, msg)
+                logger.info("Auto-restarting in %d seconds...", wait_seconds)
+                time.sleep(wait_seconds)
 
     except KeyboardInterrupt:
         event.set()
