@@ -514,20 +514,24 @@ class Session:
         return json.dumps(cookie_dict, indent=2)
 
     def export_cookies_js(self) -> str:
-        """Export session cookies as a JavaScript snippet for browser injection.
+        """Export the ikariam session cookie as a JavaScript snippet.
+
+        Only exports the ``ikariam`` cookie — it's the only one needed
+        to resume a session.  The other cookies (PHPSESSID, Cloudflare
+        tokens, etc.) are short-lived infrastructure cookies that don't
+        transfer between browsers.
 
         Returns
         -------
         str
-            JavaScript code that sets the cookies in a browser console.
+            JavaScript code that sets the cookie in a browser console.
         """
-        cookie_dict = json.loads(self.export_cookies())
-        cookie_json = json.dumps(cookie_dict)
-        return (
-            f"cookies={cookie_json};"
-            "i=0;for(let cookie in cookies)"
-            "{document.cookie=Object.keys(cookies)[i]+'='+cookies[cookie];i++}"
-        )
+        val = self.s.cookies.get("ikariam", domain=self.host)
+        if val is None:
+            val = self.s.cookies.get("ikariam")
+        if val is None:
+            return "// No ikariam session cookie found"
+        return f"document.cookie='ikariam={val};path=/';"
 
     def import_cookies(self, cookie_input: str) -> bool:
         """Import cookies from a JSON string or raw ikariam cookie value.
