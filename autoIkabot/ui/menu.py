@@ -219,7 +219,17 @@ def _child_entry(func, session_data, event, stdin_fd):
     (which contains unpicklable threading primitives and requests.Session
     internals that break on Windows/Python 3.13+).
     """
+    from autoIkabot.utils.logging import setup_account_logger
     from autoIkabot.web.session import Session
+
+    # Set up file-based logging before anything else — without this,
+    # Python's last-resort handler prints WARNING+ to stderr, clobbering
+    # the parent's menu display.
+    setup_account_logger(
+        session_data.get("username", "unknown"),
+        f"s{session_data.get('mundo', '')}-{session_data.get('servidor', '')}",
+    )
+
     session = Session.from_dict(session_data)
     func(session, event, stdin_fd)
 

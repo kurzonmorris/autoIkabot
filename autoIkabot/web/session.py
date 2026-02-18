@@ -807,7 +807,7 @@ class Session:
 
                 # Check for bad request ID — retry with fresh token
                 if "TXT_ERROR_WRONG_REQUEST_ID" in resp_text:
-                    logger.warning("Bad actionRequest, retrying with fresh token")
+                    logger.debug("Stale actionRequest token, re-fetching")
                     # Force re-fetch by clearing the cache
                     self._action_request_token = ""
                     return self.post(
