@@ -1,4 +1,4 @@
-"""Activate Miracle v1.0 — autoIkabot module.
+"""Activate Miracle (v0.7) — autoIkabot module.
 
 Activates a wonder (miracle) on one of the player's islands. Supports
 repeated activation with automatic cooldown waiting.

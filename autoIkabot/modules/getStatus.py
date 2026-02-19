@@ -22,9 +22,6 @@ MODULE_NUMBER = 19
 MODULE_DESCRIPTION = "View empire status (resources, production, buildings)"
 
 
-_daysHoursMinutes = daysHoursMinutes
-
-
 def getStatus(session) -> None:
     """Display empire-wide status and per-city details.
 
@@ -152,7 +149,7 @@ def getStatus(session) -> None:
                 consumption_per_sec = Decimal(consumption) / Decimal(3600)
                 if consumption_per_sec > 0:
                     remaining_sec = Decimal(resources[1]) / consumption_per_sec
-                    elapsed = _daysHoursMinutes(remaining_sec)
+                    elapsed = daysHoursMinutes(remaining_sec)
                 else:
                     elapsed = "infinity"
             print(f"  Wine remaining for: {elapsed}")

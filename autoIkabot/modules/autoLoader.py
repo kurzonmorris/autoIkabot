@@ -1,4 +1,4 @@
-"""Auto Loader v1.0 — autoIkabot module.
+"""Auto Loader (v0.7) — autoIkabot module.
 
 Saves background module configurations to disk and automatically
 replays them on login so modules restart without manual re-entry.
