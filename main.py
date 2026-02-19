@@ -13,6 +13,12 @@ import multiprocessing
 import os
 import sys
 
+# Ensure the project root is on sys.path so autoIkabot package is found
+# regardless of the working directory or how main.py is invoked.
+_project_root = os.path.dirname(os.path.abspath(__file__))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from autoIkabot.config import DATA_DIR, DEBUG_DIR, VERSION
 from autoIkabot.utils.logging import get_logger, setup_main_logger
 from autoIkabot.ui.accounts_ui import run_account_selection

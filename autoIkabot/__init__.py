@@ -1,5 +1,5 @@
 """autoIkabot - Ikariam automation tool."""
 
-from autoIkabot.config import VERSION
+from .config import VERSION
 
 __version__ = VERSION
