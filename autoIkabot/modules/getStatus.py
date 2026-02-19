@@ -6,7 +6,7 @@ Ported from ikabot's function/getStatus.py for autoIkabot.
 from decimal import Decimal, getcontext
 
 from autoIkabot.config import CITY_URL, MATERIALS_NAMES
-from autoIkabot.helpers.formatting import addThousandSeparator
+from autoIkabot.helpers.formatting import addThousandSeparator, daysHoursMinutes
 from autoIkabot.helpers.game_parser import getCity, getIdsOfCities
 from autoIkabot.helpers.game_state import fetch_game_state, getProductionPerHour
 from autoIkabot.ui.prompts import banner, chooseCity, enter
@@ -22,22 +22,7 @@ MODULE_NUMBER = 19
 MODULE_DESCRIPTION = "View empire status (resources, production, buildings)"
 
 
-def _daysHoursMinutes(seconds) -> str:
-    """Format seconds into a human-readable duration string."""
-    seconds = int(seconds)
-    if seconds <= 0:
-        return "0s"
-    days = seconds // 86400
-    hours = (seconds % 86400) // 3600
-    minutes = (seconds % 3600) // 60
-    parts = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    return " ".join(parts) if parts else "<1m"
+_daysHoursMinutes = daysHoursMinutes
 
 
 def getStatus(session) -> None:

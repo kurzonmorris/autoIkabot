@@ -244,3 +244,27 @@ def getIdsOfCities(session) -> tuple:
         cities[city_id] = city_info
 
     return (ids, cities)
+
+
+def getIslandsIds(session) -> list:
+    """Get unique island IDs for all of the player's cities.
+
+    Parameters
+    ----------
+    session : Session
+        The game session.
+
+    Returns
+    -------
+    list
+        List of unique island ID strings.
+    """
+    from autoIkabot.config import CITY_URL
+
+    cities_ids, cities = getIdsOfCities(session)
+    islands_ids = set()
+    for city_id in cities_ids:
+        html = session.get(CITY_URL + city_id)
+        city = getCity(html)
+        islands_ids.add(city["islandId"])
+    return list(islands_ids)

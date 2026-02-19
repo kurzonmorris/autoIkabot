@@ -96,6 +96,11 @@ def set_child_mode(session) -> None:
     session.is_parent = False
     deactivate_sigint()
 
+    # Flush any recorded inputs to a temp file so the parent can read
+    # them after the config phase (used by autoLoader recording).
+    from autoIkabot.ui.prompts import flush_recorded_inputs_to_file
+    flush_recorded_inputs_to_file()
+
     # Redirect stdout/stderr to the per-process log file.
     # After this point, all print() calls go to the log silently.
     child_logger = get_logger("autoIkabot.background")
@@ -236,6 +241,7 @@ def update_process_status(session, status: str) -> None:
     for entry in process_list:
         if entry.get("pid") == my_pid:
             entry["status"] = status
+            entry["last_heartbeat"] = time.time()
             updated = True
             break
 
@@ -331,3 +337,59 @@ def read_critical_errors(session) -> List[Dict[str, Any]]:
         pass
 
     return errors if isinstance(errors, list) else []
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat / frozen process detection
+# ---------------------------------------------------------------------------
+
+HEARTBEAT_STALE_THRESHOLD = 600  # 10 minutes
+
+
+def is_process_frozen(entry: Dict[str, Any]) -> bool:
+    """Check if a process entry's heartbeat is stale.
+
+    A process is considered frozen if it has not updated its heartbeat
+    in more than ``HEARTBEAT_STALE_THRESHOLD`` seconds (default 10 min).
+
+    Parameters
+    ----------
+    entry : dict
+        A process list entry with optional ``last_heartbeat`` field.
+
+    Returns
+    -------
+    bool
+        True if the heartbeat is stale, False otherwise or if no
+        heartbeat data is available (legacy entry).
+    """
+    last_hb = entry.get("last_heartbeat")
+    if last_hb is None:
+        return False  # Legacy entry without heartbeat data
+    return (time.time() - last_hb) > HEARTBEAT_STALE_THRESHOLD
+
+
+def sleep_with_heartbeat(session, seconds: float, interval: float = 300) -> None:
+    """Sleep for *seconds*, updating the heartbeat every *interval* seconds.
+
+    Long-sleeping modules (e.g. waiting for a miracle cooldown) should use
+    this instead of ``time.sleep()`` so their heartbeat stays fresh and the
+    auto-loader won't flag them as frozen.
+
+    Parameters
+    ----------
+    session : Session
+        The game session (used to call ``setStatus``).
+    seconds : float
+        Total time to sleep.
+    interval : float
+        How often to wake up and refresh the heartbeat (default 5 min).
+    """
+    remaining = seconds
+    while remaining > 0:
+        sleep_time = min(remaining, interval)
+        time.sleep(sleep_time)
+        remaining -= sleep_time
+        if remaining > 0:
+            # Re-post the current status to refresh the heartbeat timestamp
+            session.setStatus(session._status)

@@ -304,3 +304,76 @@ def _dispatch_background(session, mod: Dict[str, Any]) -> None:
     event.wait()
 
     logger.info("Background module '%s' config complete, returning to menu", mod["name"])
+
+
+def dispatch_module_auto(
+    session, mod: Dict[str, Any], predetermined_inputs: list
+) -> bool:
+    """Spawn a background module with pre-determined inputs.
+
+    Used by the autoLoader to replay saved configs without user interaction.
+    Sets the predetermined input deque *before* forking so the child
+    inherits the values and ``read()`` returns them instead of prompting.
+
+    Parameters
+    ----------
+    session : Session
+        The game session.
+    mod : dict
+        Module registry entry.
+    predetermined_inputs : list
+        Ordered list of inputs to feed to ``read()`` calls.
+
+    Returns
+    -------
+    bool
+        True if the module was launched successfully.
+    """
+    from autoIkabot.ui.prompts import set_predetermined_input
+
+    if not mod.get("background"):
+        return False
+
+    # Set inputs BEFORE fork — child inherits via copy-on-write
+    set_predetermined_input(predetermined_inputs)
+
+    event = multiprocessing.Event()
+    try:
+        stdin_fd = sys.stdin.fileno()
+    except (AttributeError, ValueError):
+        set_predetermined_input([])
+        return False
+
+    session_data = session.to_dict()
+
+    process = multiprocessing.Process(
+        target=_child_entry,
+        args=(mod["func"], session_data, event, stdin_fd),
+        name=f"AutoLoad-{mod['name']}",
+    )
+    process.start()
+
+    # Clear in parent after fork
+    set_predetermined_input([])
+
+    process_entry = {
+        "pid": process.pid,
+        "action": mod["name"],
+        "date": time.time(),
+        "status": "auto-loaded",
+        "last_heartbeat": time.time(),
+    }
+    update_process_list(session, new_processes=[process_entry])
+
+    logger.info(
+        "Auto-loading module '%s' (PID %d), waiting for config...",
+        mod["name"], process.pid,
+    )
+
+    # Wait for config phase with timeout
+    if not event.wait(timeout=120):
+        logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
+        return False
+
+    logger.info("Auto-load of '%s' config complete", mod["name"])
+    return True

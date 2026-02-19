@@ -166,6 +166,39 @@ def main() -> None:
             func=getStatus,
         )
 
+        # Miracle activation (Regular/Daily) — background
+        from autoIkabot.modules.activateMiracle import (
+            activateMiracle,
+            MODULE_NAME as MIRACLE_NAME,
+            MODULE_SECTION as MIRACLE_SECTION,
+            MODULE_NUMBER as MIRACLE_NUMBER,
+            MODULE_DESCRIPTION as MIRACLE_DESC,
+        )
+        register_module(
+            name=MIRACLE_NAME, section=MIRACLE_SECTION,
+            number=MIRACLE_NUMBER, description=MIRACLE_DESC,
+            func=activateMiracle,
+            background=True,
+        )
+
+        # Auto Loader (Settings) — synchronous
+        from autoIkabot.modules.autoLoader import (
+            autoLoader,
+            MODULE_NAME as AUTOLOAD_NAME,
+            MODULE_SECTION as AUTOLOAD_SECTION,
+            MODULE_NUMBER as AUTOLOAD_NUMBER,
+            MODULE_DESCRIPTION as AUTOLOAD_DESC,
+        )
+        register_module(
+            name=AUTOLOAD_NAME, section=AUTOLOAD_SECTION,
+            number=AUTOLOAD_NUMBER, description=AUTOLOAD_DESC,
+            func=autoLoader,
+        )
+
+        # Auto-launch saved module configs before entering the menu
+        from autoIkabot.modules.autoLoader import launch_saved_configs
+        launch_saved_configs(session)
+
         run_menu(session)
 
         # User chose Exit — check for background tasks
