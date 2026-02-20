@@ -76,7 +76,8 @@ def killTasks(session) -> None:
             continue
 
         try:
-            os.kill(pid, signal.SIGKILL)
+            sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+            os.kill(pid, sig)
             logger.info("Killed process %d (%s)", pid, action)
             print(f"  Killed: {action} (PID {pid})")
         except ProcessLookupError:
