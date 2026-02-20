@@ -539,23 +539,23 @@ class Session:
         return json.dumps(cookie_dict, indent=2)
 
     def export_cookies_js(self) -> str:
-        """Export the ikariam session cookie as a JavaScript snippet.
+        """Export all session cookies as a JavaScript snippet.
 
-        Matches ikabot's proven JS format for pasting into the browser
-        console to restore a session.
+        Generates a browser console snippet that sets all session cookies
+        (ikariam, PHPSESSID, gf-token-production, etc.) with path=/.
 
         Returns
         -------
         str
-            JavaScript code that sets the cookie in a browser console.
+            JavaScript code that sets cookies in a browser console.
         """
-        val = self._get_ikariam_cookie()
-        if val is None:
-            return "// No ikariam session cookie found"
-        cookie_json = json.dumps({"ikariam": val})
+        cookie_dict = json.loads(self.export_cookies())
+        if not cookie_dict:
+            return "// No session cookies found"
+        cookie_json = json.dumps(cookie_dict)
         return (
             'cookies={};i=0;for(let cookie in cookies)'
-            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
+            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie]+"; path=/";i++}}'
         ).format(cookie_json)
 
     def import_cookies(self, cookie_input: str) -> bool:
