@@ -495,6 +495,28 @@ class Session:
     # Cookie management (Phase 5.3)
     # ------------------------------------------------------------------
 
+    def _get_ikariam_cookie(self) -> str:
+        """Get the ikariam cookie value from the session.
+
+        Tries domain-scoped lookup first, then falls back to iterating
+        all cookies — handles domain-mismatch edge cases that cause
+        ``cookies.get(name, domain=...)`` to return None.
+
+        Returns
+        -------
+        str or None
+            The ikariam cookie value, or None if not found.
+        """
+        # Try domain-scoped first
+        val = self.s.cookies.get("ikariam", domain=self.host)
+        if val is not None:
+            return val
+        # Fallback: iterate all cookies (handles domain mismatch)
+        for cookie in self.s.cookies:
+            if cookie.name == "ikariam":
+                return cookie.value
+        return None
+
     def export_cookies(self) -> str:
         """Export session cookies as a JSON string.
 
@@ -507,8 +529,11 @@ class Session:
         for name in SESSION_COOKIE_NAMES:
             val = self.s.cookies.get(name, domain=self.host)
             if val is None:
-                # Try without domain constraint
-                val = self.s.cookies.get(name)
+                # Fallback: iterate all cookies
+                for cookie in self.s.cookies:
+                    if cookie.name == name:
+                        val = cookie.value
+                        break
             if val is not None:
                 cookie_dict[name] = val
         return json.dumps(cookie_dict, indent=2)
@@ -516,22 +541,22 @@ class Session:
     def export_cookies_js(self) -> str:
         """Export the ikariam session cookie as a JavaScript snippet.
 
-        Only exports the ``ikariam`` cookie — it's the only one needed
-        to resume a session.  The other cookies (PHPSESSID, Cloudflare
-        tokens, etc.) are short-lived infrastructure cookies that don't
-        transfer between browsers.
+        Matches ikabot's proven JS format for pasting into the browser
+        console to restore a session.
 
         Returns
         -------
         str
             JavaScript code that sets the cookie in a browser console.
         """
-        val = self.s.cookies.get("ikariam", domain=self.host)
-        if val is None:
-            val = self.s.cookies.get("ikariam")
+        val = self._get_ikariam_cookie()
         if val is None:
             return "// No ikariam session cookie found"
-        return f"document.cookie='ikariam={val};path=/';"
+        cookie_json = json.dumps({"ikariam": val})
+        return (
+            'cookies={};i=0;for(let cookie in cookies)'
+            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
+        ).format(cookie_json)
 
     def import_cookies(self, cookie_input: str) -> bool:
         """Import cookies from a JSON string or raw ikariam cookie value.

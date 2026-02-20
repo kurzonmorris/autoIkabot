@@ -56,11 +56,15 @@ def _export_json(session) -> None:
     """Export cookies as JSON string."""
     banner()
     print(_SECURITY_WARNING)
-    cookie_json = session.export_cookies()
-    print("  Session cookies (JSON):")
-    print("  " + "-" * 50)
-    print(cookie_json)
-    print("  " + "-" * 50)
+    # Refresh session to ensure cookie is valid
+    session.get()
+    ikariam_cookie = session._get_ikariam_cookie()
+    if ikariam_cookie is None:
+        print("  No ikariam session cookie found.")
+        enter()
+        return
+    print("Use this cookie to synchronise two ikabot instances on 2 different machines\n")
+    print("ikariam=" + ikariam_cookie + "\n")
     logger.info("Cookies exported as JSON")
     enter()
 
@@ -69,12 +73,22 @@ def _export_js(session) -> None:
     """Export cookies as JavaScript snippet."""
     banner()
     print(_SECURITY_WARNING)
+    # Refresh session to ensure cookie is valid
+    session.get()
     cookie_js = session.export_cookies_js()
-    print("  Paste this in your browser console (F12 > Console):")
-    print("  " + "-" * 50)
+    if cookie_js.startswith("//"):
+        print("  No ikariam session cookie found.")
+        enter()
+        return
+    print(
+        """To prevent ikabot from logging you out while playing Ikariam do the following:
+1. Be on the "Your session has expired" screen
+2. Open Chrome javascript console by pressing CTRL + SHIFT + J
+3. Copy the text below, paste it into the console and press enter
+4. Press F5
+"""
+    )
     print(cookie_js)
-    print("  " + "-" * 50)
-    print(f"\n  Then navigate to: https://{session.host}")
     logger.info("Cookies exported as JavaScript")
     enter()
 
