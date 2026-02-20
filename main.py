@@ -129,6 +129,20 @@ def main() -> None:
             func=importExportCookie,
         )
 
+        # Task Status module (Settings)
+        from autoIkabot.modules.taskStatus import (
+            taskStatus,
+            MODULE_NAME as TASKSTATUS_NAME,
+            MODULE_SECTION as TASKSTATUS_SECTION,
+            MODULE_NUMBER as TASKSTATUS_NUMBER,
+            MODULE_DESCRIPTION as TASKSTATUS_DESC,
+        )
+        register_module(
+            name=TASKSTATUS_NAME, section=TASKSTATUS_SECTION,
+            number=TASKSTATUS_NUMBER, description=TASKSTATUS_DESC,
+            func=taskStatus,
+        )
+
         # Kill Tasks module (Settings)
         from autoIkabot.modules.killTasks import (
             killTasks,
