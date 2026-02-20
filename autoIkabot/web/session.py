@@ -1,24 +1,29 @@
-"""Game session wrapper for HTTP requests to the Ikariam game server (Phase 2).
+"""Game session wrapper for HTTP requests to the Ikariam game server.
 
 Wraps a requests.Session (already authenticated via core.login) and provides:
   - get() / post() methods for game server requests
   - Automatic CSRF token (actionRequest) extraction and injection
+  - Re-extraction of actionRequest from every response (Phase 5.1)
+  - Rate limiting between requests (Phase 5.1)
+  - currentCityId tracking (Phase 5.1)
   - Session expiration detection with automatic re-login
   - Request history tracking (last 5 requests for debugging)
   - Proxy management (apply/remove after lobby)
   - Connection error retry with backoff
   - Server maintenance detection
   - Periodic session health check (Phase 3.4)
+  - Cookie import/export (Phase 5.3)
 
 This class is the primary interface that all game modules will use to
 communicate with the Ikariam server.
 """
 
+import json
 import re
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import requests
 
@@ -27,6 +32,8 @@ from autoIkabot.config import (
     CONNECTION_ERROR_WAIT,
     HEALTH_CHECK_INTERVAL,
     HEALTH_CHECK_VIEW,
+    RATE_LIMIT_MIN_DELAY,
+    SESSION_COOKIE_NAMES,
     SSL_VERIFY,
 )
 from autoIkabot.utils.logging import get_logger
@@ -102,10 +109,123 @@ class Session:
         self._health_thread: Optional[threading.Thread] = None
         self._health_stop = threading.Event()
 
+        # Phase 5.1: CSRF token cache — avoids extra GET on every POST
+        self._action_request_token: str = ""
+        self._token_lock = threading.Lock()
+
+        # Phase 5.1: Rate limiting
+        self._last_request_time: float = 0.0
+        self._rate_lock = threading.Lock()
+
+        # Phase 5.1: Current city ID tracking
+        self._current_city_id: str = ""
+        self._city_lock = threading.Lock()
+
+        # Proxy state lock (health check thread reads _proxy_active)
+        self._proxy_lock = threading.Lock()
+
         logger.info(
             "Session initialized: %s on s%s-%s (%s)",
             self.username, self.mundo, self.servidor, self.world_name,
         )
+
+    # ------------------------------------------------------------------
+    # Cross-process serialization (factory method)
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize session state to a plain dict for cross-process transfer.
+
+        Used by _dispatch_background() to pass session data to child
+        processes without pickling. The child reconstructs a fresh Session
+        via Session.from_dict().
+
+        Returns
+        -------
+        dict
+            Plain, fully-picklable dict of session state.
+        """
+        return {
+            "host": self.host,
+            "url_base": self.url_base,
+            "username": self.username,
+            "mundo": self.mundo,
+            "servidor": self.servidor,
+            "account_id": self.account_id,
+            "account_group": self.account_group,
+            "world_name": self.world_name,
+            "gf_token": self.gf_token,
+            "blackbox_token": self.blackbox_token,
+            "game_headers": dict(self.game_headers),
+            "cookies": dict(self.s.cookies),
+            "proxies": dict(self.s.proxies),
+            "account_info": self._account_info,
+            "action_request_token": self._action_request_token,
+            "current_city_id": self._current_city_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Session":
+        """Reconstruct a Session in a child process from a plain dict.
+
+        Creates a fresh Session with its own requests.Session, threading
+        primitives, and child-process defaults. No pickling involved.
+
+        Parameters
+        ----------
+        data : dict
+            Output of to_dict().
+
+        Returns
+        -------
+        Session
+            A fully functional Session for use in a child process.
+        """
+        obj = cls.__new__(cls)
+
+        # Plain attributes
+        obj.host = data["host"]
+        obj.url_base = data["url_base"]
+        obj.username = data["username"]
+        obj.mundo = data["mundo"]
+        obj.servidor = data["servidor"]
+        obj.account_id = data["account_id"]
+        obj.account_group = data["account_group"]
+        obj.world_name = data["world_name"]
+        obj.gf_token = data["gf_token"]
+        obj.blackbox_token = data["blackbox_token"]
+        obj.game_headers = data["game_headers"]
+        obj._account_info = data["account_info"]
+        obj._action_request_token = data["action_request_token"]
+        obj._current_city_id = data["current_city_id"]
+
+        # Build fresh requests.Session
+        obj.s = requests.Session()
+        obj.s.headers.update(data["game_headers"])
+        for name, value in data["cookies"].items():
+            obj.s.cookies.set(name, value)
+        if data["proxies"]:
+            obj.s.proxies.update(data["proxies"])
+
+        # Fresh threading primitives
+        obj._health_thread = None
+        obj._health_stop = threading.Event()
+        obj._token_lock = threading.Lock()
+        obj._rate_lock = threading.Lock()
+        obj._city_lock = threading.Lock()
+        obj._proxy_lock = threading.Lock()
+
+        # Child process defaults
+        obj.is_parent = False
+        obj.request_history = deque(maxlen=5)
+        obj._last_request_time = 0.0
+        obj._proxy_active = bool(data["proxies"])
+
+        logger.info(
+            "Session reconstructed in child: %s on s%s-%s",
+            obj.username, obj.mundo, obj.servidor,
+        )
+        return obj
 
     # ------------------------------------------------------------------
     # Session status checks
@@ -197,7 +317,53 @@ class Session:
         if match is None:
             logger.warning("Could not extract actionRequest token from HTML")
             return ""
-        return match.group(1)
+        token = match.group(1)
+        with self._token_lock:
+            self._action_request_token = token
+        return token
+
+    def _try_extract_token(self, html: str) -> None:
+        """Try to extract and cache actionRequest from response HTML.
+
+        Called after every successful response to keep the token fresh.
+        Does not make additional requests — only parses what we already have.
+
+        Parameters
+        ----------
+        html : str
+            Response HTML to parse.
+        """
+        match = re.search(r'actionRequest"?:\s*"(.*?)"', html)
+        if match:
+            with self._token_lock:
+                self._action_request_token = match.group(1)
+
+    def _try_extract_city_id(self, html: str) -> None:
+        """Try to extract currentCityId from response HTML.
+
+        Parameters
+        ----------
+        html : str
+            Response HTML to parse.
+        """
+        match = re.search(r"currentCityId:\s*(\d+)", html)
+        if match:
+            with self._city_lock:
+                self._current_city_id = match.group(1)
+
+    # ------------------------------------------------------------------
+    # Rate limiting (Phase 5.1)
+    # ------------------------------------------------------------------
+
+    def _enforce_rate_limit(self) -> None:
+        """Enforce minimum delay between requests to avoid IP ban."""
+        with self._rate_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request_time
+            if elapsed < RATE_LIMIT_MIN_DELAY:
+                sleep_time = RATE_LIMIT_MIN_DELAY - elapsed
+                time.sleep(sleep_time)
+            self._last_request_time = time.monotonic()
 
     # ------------------------------------------------------------------
     # Session expiry / re-login
@@ -235,6 +401,9 @@ class Session:
             # Re-apply proxy if it was active
             if self._proxy_active:
                 self._apply_proxy()
+
+            # Clear cached token — will be refreshed on next request
+            self._action_request_token = ""
 
             logger.info("Re-login successful")
         except LoginError as e:
@@ -279,7 +448,8 @@ class Session:
             "http": proxy_url,
             "https": proxy_url,
         })
-        self._proxy_active = True
+        with self._proxy_lock:
+            self._proxy_active = True
         self._proxy_config = proxy_config
         logger.info("Proxy activated: %s:%s", host, port)
 
@@ -291,7 +461,8 @@ class Session:
     def deactivate_proxy(self) -> None:
         """Remove proxy from the session."""
         self.s.proxies.clear()
-        self._proxy_active = False
+        with self._proxy_lock:
+            self._proxy_active = False
         logger.info("Proxy deactivated")
 
     # ------------------------------------------------------------------
@@ -301,7 +472,8 @@ class Session:
     def setStatus(self, status: str) -> None:
         """Set a status message for the current operation.
 
-        Logged and (in the future) displayed in the UI.
+        Logged and, when running as a background process, written to
+        the process list file so the parent menu can display it.
 
         Parameters
         ----------
@@ -310,11 +482,130 @@ class Session:
         """
         self._status = status
         logger.info("Status: %s", status)
+        if not self.is_parent:
+            from autoIkabot.utils.process import update_process_status
+            update_process_status(self, status)
 
     def logout(self) -> None:
         """Close the session (cleanup)."""
         self.stop_health_check()
         logger.info("Session closed for %s", self.username)
+
+    # ------------------------------------------------------------------
+    # Cookie management (Phase 5.3)
+    # ------------------------------------------------------------------
+
+    def _get_ikariam_cookie(self) -> str:
+        """Get the ikariam cookie value from the session.
+
+        Tries domain-scoped lookup first, then falls back to iterating
+        all cookies — handles domain-mismatch edge cases that cause
+        ``cookies.get(name, domain=...)`` to return None.
+
+        Returns
+        -------
+        str or None
+            The ikariam cookie value, or None if not found.
+        """
+        # Try domain-scoped first
+        val = self.s.cookies.get("ikariam", domain=self.host)
+        if val is not None:
+            return val
+        # Fallback: iterate all cookies (handles domain mismatch)
+        for cookie in self.s.cookies:
+            if cookie.name == "ikariam":
+                return cookie.value
+        return None
+
+    def export_cookies(self) -> str:
+        """Export session cookies as a JSON string.
+
+        Returns
+        -------
+        str
+            JSON string of session cookies.
+        """
+        cookie_dict = {}
+        for name in SESSION_COOKIE_NAMES:
+            val = self.s.cookies.get(name, domain=self.host)
+            if val is None:
+                # Fallback: iterate all cookies
+                for cookie in self.s.cookies:
+                    if cookie.name == name:
+                        val = cookie.value
+                        break
+            if val is not None:
+                cookie_dict[name] = val
+        return json.dumps(cookie_dict, indent=2)
+
+    def export_cookies_js(self) -> str:
+        """Export the ikariam session cookie as a JavaScript snippet.
+
+        Matches ikabot's proven JS format for pasting into the browser
+        console to restore a session.
+
+        Returns
+        -------
+        str
+            JavaScript code that sets the cookie in a browser console.
+        """
+        val = self._get_ikariam_cookie()
+        if val is None:
+            return "// No ikariam session cookie found"
+        cookie_json = json.dumps({"ikariam": val})
+        return (
+            'cookies={};i=0;for(let cookie in cookies)'
+            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
+        ).format(cookie_json)
+
+    def import_cookies(self, cookie_input: str) -> bool:
+        """Import cookies from a JSON string or raw ikariam cookie value.
+
+        Parameters
+        ----------
+        cookie_input : str
+            Either a JSON dict of cookies, or a raw ikariam cookie value.
+
+        Returns
+        -------
+        bool
+            True if the imported cookies produced a valid session.
+        """
+        cookie_input = cookie_input.strip()
+
+        # Try JSON first
+        try:
+            cookie_dict = json.loads(cookie_input)
+        except (json.JSONDecodeError, ValueError):
+            # Treat as raw ikariam cookie value
+            cookie_input = cookie_input.replace("ikariam=", "")
+            cookie_dict = {"ikariam": cookie_input}
+
+        # Set cookies on the session
+        for name, value in cookie_dict.items():
+            self.s.cookies.set(name, value, domain=self.host, path="/")
+
+        # Validate by making a test request
+        html = self.s.get(self.url_base, verify=SSL_VERIFY, timeout=30).text
+        if self._is_expired(html):
+            logger.warning("Imported cookies are invalid/expired")
+            return False
+
+        # Update cached state from the response
+        self._try_extract_token(html)
+        self._try_extract_city_id(html)
+        logger.info("Cookies imported and validated successfully")
+        return True
+
+    def get_session_cookies(self) -> Dict[str, str]:
+        """Return all cookies in the session as a dict.
+
+        Returns
+        -------
+        dict
+            Name -> value mapping of all session cookies.
+        """
+        return dict(self.s.cookies.items())
 
     # ------------------------------------------------------------------
     # HTTP methods — game server requests
@@ -359,6 +650,8 @@ class Session:
 
         while True:
             try:
+                self._enforce_rate_limit()
+
                 # Track request
                 self.request_history.append({
                     "method": "GET",
@@ -383,6 +676,10 @@ class Session:
                 }
 
                 html = response.text
+
+                # Re-extract actionRequest and currentCityId from every response
+                self._try_extract_token(html)
+                self._try_extract_city_id(html)
 
                 # Check for server maintenance
                 if self._is_maintenance(html):
@@ -420,8 +717,8 @@ class Session:
     ) -> Union[str, requests.Response]:
         """Send a POST request to the game server with CSRF token.
 
-        Automatically fetches a fresh actionRequest token and injects
-        it into the URL and/or payload. If the server responds with
+        Automatically injects the actionRequest token, ajax=1, and
+        Content-Type header. If the server responds with
         TXT_ERROR_WRONG_REQUEST_ID, retries with a fresh token.
 
         Parameters
@@ -454,8 +751,13 @@ class Session:
         payload_original = dict(payload)
         params_original = dict(params)
 
-        # Get fresh CSRF token
-        token = self._extract_token()
+        # Get CSRF token — use cached if available, otherwise fetch
+        with self._token_lock:
+            cached_token = self._action_request_token
+        if cached_token:
+            token = cached_token
+        else:
+            token = self._extract_token()
 
         # Inject token into URL, payload, and params
         url = url.replace(ACTION_REQUEST_PLACEHOLDER, token)
@@ -464,13 +766,25 @@ class Session:
         if "actionRequest" in params:
             params["actionRequest"] = token
 
+        # Auto-inject ajax=1 into params if not already present
+        if "ajax" not in params and "ajax" not in payload:
+            if params:
+                params["ajax"] = "1"
+
         if no_index:
             full_url = self.url_base.replace("index.php", "") + url
         else:
             full_url = self.url_base + url
 
+        # Ensure proper Content-Type for form-encoded POST data
+        post_headers = {
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+
         while True:
             try:
+                self._enforce_rate_limit()
+
                 self.request_history.append({
                     "method": "POST",
                     "url": full_url,
@@ -484,6 +798,7 @@ class Session:
                     full_url,
                     data=payload,
                     params=params,
+                    headers=post_headers,
                     verify=SSL_VERIFY,
                     timeout=300,
                     **kwargs,
@@ -495,6 +810,10 @@ class Session:
                 }
 
                 resp_text = response.text
+
+                # Re-extract actionRequest from every response
+                self._try_extract_token(resp_text)
+                self._try_extract_city_id(resp_text)
 
                 # Check for server maintenance
                 if self._is_maintenance(resp_text):
@@ -517,7 +836,9 @@ class Session:
 
                 # Check for bad request ID — retry with fresh token
                 if "TXT_ERROR_WRONG_REQUEST_ID" in resp_text:
-                    logger.warning("Bad actionRequest, retrying with fresh token")
+                    logger.debug("Stale actionRequest token, re-fetching")
+                    # Force re-fetch by clearing the cache
+                    self._action_request_token = ""
                     return self.post(
                         url=url_original,
                         payload=payload_original,

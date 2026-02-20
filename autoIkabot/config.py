@@ -10,7 +10,7 @@ import pathlib
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
-VERSION = "0.1.0"
+VERSION = "0.7.1"
 
 # ---------------------------------------------------------------------------
 # Filesystem paths (all pathlib.Path, cross-platform)
@@ -125,3 +125,17 @@ MATERIALS_NAMES = ["Wood", "Wine", "Marble", "Crystal", "Sulfur"]
 # URL query fragments for fetching city/island views
 CITY_URL = "view=city&cityId="
 ISLAND_URL = "view=island&islandId="
+
+# Rate limiting — minimum seconds between game requests (Phase 5.1)
+# Too fast triggers Ikariam's anti-bot detection / IP ban
+RATE_LIMIT_MIN_DELAY = 0.3         # seconds between requests (300ms)
+
+# Key cookie names for import/export (Phase 5.3)
+SESSION_COOKIE_NAMES = [
+    "ikariam",
+    "PHPSESSID",
+    "gf-token-production",
+    "GTPINGRESSCOOKIE",
+    "cf_clearance",
+    "__cf_bm",
+]

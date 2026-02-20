@@ -11,6 +11,7 @@ and helpers/pedirInfo.py.
 import getpass
 import os
 import sys
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from autoIkabot.config import CITY_URL, IS_WINDOWS, MATERIALS_NAMES, VERSION
@@ -145,6 +146,70 @@ def has_tty() -> bool:
 
 _PROMPT = ">> "
 
+# ---------------------------------------------------------------------------
+# Predetermined / recorded input support (used by autoLoader)
+# ---------------------------------------------------------------------------
+
+_predetermined_input: deque = deque()
+_recording_inputs: bool = False
+_recorded_inputs: List = []
+
+
+def set_predetermined_input(inputs) -> None:
+    """Set pre-determined inputs for non-interactive module replay.
+
+    When the deque is non-empty, ``read()`` and ``enter()`` consume from it
+    instead of prompting the user.
+
+    Parameters
+    ----------
+    inputs : iterable
+        Ordered list of values that ``read()`` will return.
+    """
+    _predetermined_input.clear()
+    _predetermined_input.extend(inputs)
+
+
+def start_recording_inputs() -> None:
+    """Begin recording user inputs for autoLoader config capture."""
+    global _recording_inputs, _recorded_inputs
+    _recording_inputs = True
+    _recorded_inputs = []
+
+
+def stop_recording_inputs() -> List:
+    """Stop recording and return the captured input list.
+
+    Returns
+    -------
+    list
+        The ordered list of values that were returned by ``read()``
+        during the recording session.
+    """
+    global _recording_inputs
+    _recording_inputs = False
+    return list(_recorded_inputs)
+
+
+def flush_recorded_inputs_to_file() -> None:
+    """Write recorded inputs to a temp file (for cross-process transfer).
+
+    Called by child processes before ``event.set()`` so the parent can
+    read the recorded inputs after the config phase completes.
+    """
+    import json as _json
+
+    if not _recorded_inputs:
+        return
+    filepath = os.path.join(
+        os.path.expanduser("~"), ".autoikabot_recorded_inputs.json"
+    )
+    try:
+        with open(filepath, "w") as f:
+            _json.dump(list(_recorded_inputs), f)
+    except IOError:
+        pass
+
 
 def read(
     min: Optional[int] = None,
@@ -182,6 +247,13 @@ def read(
     int or str or None
     """
     while True:
+        # Auto-load replay: return pre-recorded input without prompting
+        if _predetermined_input:
+            val = _predetermined_input.popleft()
+            if _recording_inputs:
+                _recorded_inputs.append(val)
+            return val
+
         try:
             raw = input(msg)
         except EOFError:
@@ -189,12 +261,18 @@ def read(
 
         # Check additional values first (e.g. "'" for exit)
         if additionalValues is not None and raw in additionalValues:
+            if _recording_inputs:
+                _recorded_inputs.append(raw)
             return raw
 
         # Default on empty
         if raw == "" and default is not None:
+            if _recording_inputs:
+                _recorded_inputs.append(default)
             return default
         if raw == "" and empty:
+            if _recording_inputs:
+                _recorded_inputs.append(raw)
             return raw
 
         # Numeric validation
@@ -206,30 +284,45 @@ def read(
                 continue
             if max is not None and val > max:
                 continue
+            if _recording_inputs:
+                _recorded_inputs.append(val)
             return val
 
         # String value whitelist
         if values is not None and raw not in values:
             continue
 
+        if _recording_inputs:
+            _recorded_inputs.append(raw)
         return raw
 
 
 def enter() -> None:
     """Wait for the user to press Enter."""
-    if IS_WINDOWS:
+    if _predetermined_input:
+        _predetermined_input.popleft()  # consume placeholder
+        return
+    try:
         input("\n[Enter]")
-    else:
-        try:
-            getpass.getpass("\n[Enter]")
-        except EOFError:
-            pass
+    except EOFError:
+        pass
+
+
+LOGO = r"""
+               #                 _         _____ _         _           _
+#      __ _ _   _| |_ ___   \_   \ | ____ _| |__   ___ | |_
+#     / _` | | | | __/ _ \   / /\/ |/ / _` | '_ \ / _ \| __|
+#    | (_| | |_| | || (_) /\/ /_ |   < (_| | |_) | (_) | |_
+#     \__,_|\__,_|\__\___/\____/ |_|\_\__,_|_.__/ \___/ \__|
+#
+"""
 
 
 def banner() -> None:
     """Clear screen and print the autoIkabot header banner."""
     clear_screen()
-    print(f"\n  autoIkabot v{VERSION}\n")
+    print(LOGO)
+    print(f"  v{VERSION}\n")
 
 
 # ---------------------------------------------------------------------------

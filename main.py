@@ -4,9 +4,20 @@
 Initializes the debug logging system, presents the account selection UI,
 runs the login flow, creates a game session, registers modules, and
 enters the main menu loop.
+
+Background modules are spawned as child processes. When the user exits
+the menu, the parent process terminates while children continue running.
 """
 
+import multiprocessing
+import os
 import sys
+
+# Ensure the project root is on sys.path so autoIkabot package is found
+# regardless of the working directory or how main.py is invoked.
+_project_root = os.path.dirname(os.path.abspath(__file__))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from autoIkabot.config import DATA_DIR, DEBUG_DIR, VERSION
 from autoIkabot.utils.logging import get_logger, setup_main_logger
@@ -101,30 +112,125 @@ def main() -> None:
         # --- Phase 3.4: Start session health check ---
         session.start_health_check()
 
-        # --- Phase 4: Register modules and run main menu ---
+        # --- Phase 4+5: Register modules and run main menu ---
         from autoIkabot.ui.menu import register_module, run_menu
+
+        # Settings modules (Phase 5.3)
+        from autoIkabot.modules.importExportCookie import (
+            importExportCookie,
+            MODULE_NAME as COOKIE_NAME,
+            MODULE_SECTION as COOKIE_SECTION,
+            MODULE_NUMBER as COOKIE_NUMBER,
+            MODULE_DESCRIPTION as COOKIE_DESC,
+        )
+        register_module(
+            name=COOKIE_NAME, section=COOKIE_SECTION,
+            number=COOKIE_NUMBER, description=COOKIE_DESC,
+            func=importExportCookie,
+        )
+
+        # Kill Tasks module (Settings)
+        from autoIkabot.modules.killTasks import (
+            killTasks,
+            MODULE_NAME as KILL_NAME,
+            MODULE_SECTION as KILL_SECTION,
+            MODULE_NUMBER as KILL_NUMBER,
+            MODULE_DESCRIPTION as KILL_DESC,
+        )
+        register_module(
+            name=KILL_NAME, section=KILL_SECTION,
+            number=KILL_NUMBER, description=KILL_DESC,
+            func=killTasks,
+        )
+
+        # Transport modules (Phase 4) — runs in background
         from autoIkabot.modules.resourceTransportManager import (
             resourceTransportManager,
-            MODULE_NAME,
-            MODULE_SECTION,
-            MODULE_NUMBER,
-            MODULE_DESCRIPTION,
+            MODULE_NAME as RTM_NAME,
+            MODULE_SECTION as RTM_SECTION,
+            MODULE_NUMBER as RTM_NUMBER,
+            MODULE_DESCRIPTION as RTM_DESC,
+        )
+        register_module(
+            name=RTM_NAME, section=RTM_SECTION,
+            number=RTM_NUMBER, description=RTM_DESC,
+            func=resourceTransportManager,
+            background=True,
         )
 
-        register_module(
-            name=MODULE_NAME,
-            section=MODULE_SECTION,
-            number=MODULE_NUMBER,
-            description=MODULE_DESCRIPTION,
-            func=resourceTransportManager,
+        # Monitoring modules (Phase 5.2)
+        from autoIkabot.modules.getStatus import (
+            getStatus,
+            MODULE_NAME as STATUS_NAME,
+            MODULE_SECTION as STATUS_SECTION,
+            MODULE_NUMBER as STATUS_NUMBER,
+            MODULE_DESCRIPTION as STATUS_DESC,
         )
+        register_module(
+            name=STATUS_NAME, section=STATUS_SECTION,
+            number=STATUS_NUMBER, description=STATUS_DESC,
+            func=getStatus,
+        )
+
+        # Miracle activation (Regular/Daily) — background
+        from autoIkabot.modules.activateMiracle import (
+            activateMiracle,
+            MODULE_NAME as MIRACLE_NAME,
+            MODULE_SECTION as MIRACLE_SECTION,
+            MODULE_NUMBER as MIRACLE_NUMBER,
+            MODULE_DESCRIPTION as MIRACLE_DESC,
+        )
+        register_module(
+            name=MIRACLE_NAME, section=MIRACLE_SECTION,
+            number=MIRACLE_NUMBER, description=MIRACLE_DESC,
+            func=activateMiracle,
+            background=True,
+        )
+
+        # Auto Loader (Settings) — synchronous
+        from autoIkabot.modules.autoLoader import (
+            autoLoader,
+            MODULE_NAME as AUTOLOAD_NAME,
+            MODULE_SECTION as AUTOLOAD_SECTION,
+            MODULE_NUMBER as AUTOLOAD_NUMBER,
+            MODULE_DESCRIPTION as AUTOLOAD_DESC,
+        )
+        register_module(
+            name=AUTOLOAD_NAME, section=AUTOLOAD_SECTION,
+            number=AUTOLOAD_NUMBER, description=AUTOLOAD_DESC,
+            func=autoLoader,
+        )
+
+        # Auto-launch saved module configs before entering the menu
+        from autoIkabot.modules.autoLoader import launch_saved_configs
+        launch_saved_configs(session)
 
         run_menu(session)
+
+        # User chose Exit — check for background tasks
+        from autoIkabot.utils.process import update_process_list
+        process_list = update_process_list(session)
+        if process_list:
+            count = len(process_list)
+            print(f"\n  {count} background task(s) still running.")
+            if os.name == "nt":
+                print("  WARNING (Windows): Background tasks will be killed")
+                print("  if you close this terminal window. Keep it open for")
+                print("  tasks to continue running.")
+            else:
+                print("  (Linux/Mac): Tasks will continue running even after")
+                print("  you close the terminal.")
+            print("  Run autoIkabot again to manage them.")
+
+        session.logout()
+        logger.info("Parent process exiting, children will continue.")
+        # os._exit() kills only this process — child processes survive on Unix
+        os._exit(0)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C).")
         print("\nExiting.")
-        sys.exit(0)
+        os._exit(0)
     except Exception:
         logger.exception("Unhandled exception in main")
         raise
@@ -180,4 +286,6 @@ def _update_cached_tokens(account_info, login_result, logger):
 
 
 if __name__ == "__main__":
+    # Required for multiprocessing on Windows
+    multiprocessing.freeze_support()
     main()

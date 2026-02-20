@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoIkabot"
-version = "0.1.0"
+version = "0.7.1"
 description = "Ikariam automation tool with encrypted account management"
 readme = "README.md"
 license = {text = "GPL-3.0"}
@@ -14,6 +14,7 @@ dependencies = [
     "requests[socks]",
     "cryptography>=41.0.0",
     "argon2-cffi>=23.1.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
