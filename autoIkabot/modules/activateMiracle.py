@@ -234,7 +234,12 @@ def wait_for_miracle(session, island):
         }
         temple_response = session.post(params=params)
         temple_response = json.loads(temple_response, strict=False)
-        temple_response = temple_response[2][1]
+        try:
+            temple_response = temple_response[2][1]
+        except (IndexError, KeyError, TypeError):
+            logger.warning("Unexpected temple response structure, retrying in 60s")
+            sleep_with_heartbeat(session, 60)
+            continue
 
         wait_time = None
         for elem in temple_response:
@@ -266,6 +271,14 @@ def wait_for_miracle(session, island):
         sleep_with_heartbeat(session, wait_time + 5)
 
 
+def _is_error_response(response):
+    """Check if the server response indicates an error, safely."""
+    try:
+        return response[1][1][0] == "error"
+    except (IndexError, KeyError, TypeError):
+        return False
+
+
 def do_it(session, island, iterations):
     """Activate the miracle *iterations* times, waiting between each.
 
@@ -274,16 +287,19 @@ def do_it(session, island, iterations):
     session : Session
     island : dict
     iterations : int
+        Number of times to activate.  ``0`` means repeat indefinitely.
     """
-    iterations_left = iterations
+    infinite = iterations == 0
+    iterations_left = "inf" if infinite else iterations
+    count = 0
     session.setStatus("Waiting to activate {}...".format(island["wonderName"]))
 
-    for i in range(iterations):
+    while infinite or count < iterations:
         wait_for_miracle(session, island)
 
         response = activateMiracleHttpCall(session, island)
 
-        if response[1][1][0] == "error":
+        if _is_error_response(response):
             msg = "The miracle {} could not be activated.".format(
                 island["wonderName"]
             )
@@ -291,7 +307,9 @@ def do_it(session, island, iterations):
             report_critical_error(session, MODULE_NAME, msg)
             return
 
-        iterations_left -= 1
+        count += 1
+        if not infinite:
+            iterations_left = iterations - count
         session.setStatus(
             "Activated {} @{}, iterations left: {}".format(
                 island["wonderName"], getDateTime(), iterations_left
@@ -342,7 +360,7 @@ def activateMiracle(session, event, stdin_fd):
 
             result = activateMiracleHttpCall(session, island)
 
-            if result[1][1][0] == "error":
+            if _is_error_response(result):
                 print(
                     "The miracle {} could not be activated.".format(
                         island["wonderName"]
@@ -353,7 +371,10 @@ def activateMiracle(session, event, stdin_fd):
                 return
 
             # Extract cooldown from response
-            data = result[2][1]
+            try:
+                data = result[2][1]
+            except (IndexError, KeyError, TypeError):
+                data = {}
             wait_time = 0
             for elem in data:
                 if isinstance(data[elem], dict) and "countdown" in data[elem]:
@@ -373,13 +394,14 @@ def activateMiracle(session, event, stdin_fd):
                     event.set()
                     return
 
-                iterations = read(msg="How many times?: ", digit=True, min=0)
-                if iterations == 0:
-                    event.set()
-                    return
+                print("How many times? (enter 0 for indefinitely until killed)")
+                iterations = read(msg="Times: ", digit=True, min=0)
 
-                duration = wait_time * iterations
-                print("It will finish in: {}".format(daysHoursMinutes(duration)))
+                if iterations == 0:
+                    print("It will repeat indefinitely until the module is killed.")
+                else:
+                    duration = wait_time * iterations
+                    print("It will finish in: {}".format(daysHoursMinutes(duration)))
                 print("Proceed? [Y/n]")
                 proceed = read(values=["y", "Y", "n", "N", ""])
                 if proceed.lower() == "n":
@@ -411,22 +433,26 @@ def activateMiracle(session, event, stdin_fd):
                 again = reactivate.lower() == "y"
                 if again:
                     try:
-                        extra = read(msg="How many times?: ", digit=True, min=0)
+                        print("How many extra times? (enter 0 for indefinitely until killed)")
+                        extra = read(msg="Times: ", digit=True, min=0)
                     except KeyboardInterrupt:
                         iterations = 1
                         break
 
                     if extra == 0:
-                        iterations = 1
-                        break
+                        iterations = 0  # indefinite
+                    else:
+                        iterations = extra + 1
 
-                    iterations = extra + 1
-                    duration = wait_time * iterations
-                    print(
-                        "Estimated minimum duration: {}".format(
-                            daysHoursMinutes(duration)
+                    if iterations == 0:
+                        print("It will repeat indefinitely until the module is killed.")
+                    else:
+                        duration = wait_time * iterations
+                        print(
+                            "Estimated minimum duration: {}".format(
+                                daysHoursMinutes(duration)
+                            )
                         )
-                    )
                     print("Proceed? [Y/n]")
 
                     try:
@@ -447,7 +473,10 @@ def activateMiracle(session, event, stdin_fd):
     set_child_mode(session)
     event.set()
 
-    info = "Activate miracle {} {:d} times".format(island["wonderName"], iterations)
+    if iterations == 0:
+        info = "Activate miracle {} indefinitely".format(island["wonderName"])
+    else:
+        info = "Activate miracle {} {:d} times".format(island["wonderName"], iterations)
     session.setStatus(info)
 
     try:
