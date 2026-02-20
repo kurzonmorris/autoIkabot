@@ -227,7 +227,7 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
         enter()
 
 
-def _child_entry(func, session_data, event, stdin_fd):
+def _child_entry(func, session_data, event, stdin_fd, recording=False):
     """Entry point for child processes.
 
     Reconstructs a Session from the plain dict produced by Session.to_dict(),
@@ -246,6 +246,14 @@ def _child_entry(func, session_data, event, stdin_fd):
         f"s{session_data.get('mundo', '')}-{session_data.get('servidor', '')}",
     )
 
+    # Enable input recording in the child process (for autoLoader).
+    # This must happen here rather than in the parent because on
+    # Windows/spawn the child starts fresh and doesn't inherit
+    # the parent's module-level state.
+    if recording:
+        from autoIkabot.ui.prompts import start_recording_inputs
+        start_recording_inputs()
+
     session = Session.from_dict(session_data)
     try:
         func(session, event, stdin_fd)
@@ -262,11 +270,16 @@ def _child_entry(func, session_data, event, stdin_fd):
         )
 
 
-def _dispatch_background(session, mod: Dict[str, Any]) -> None:
+def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) -> None:
     """Spawn a module as a background child process.
 
     Blocks only during the config phase (until the child calls event.set()),
     then returns to the menu while the module continues running.
+
+    Parameters
+    ----------
+    recording : bool
+        If True, the child process will record user inputs for autoLoader.
     """
     event = multiprocessing.Event()
 
@@ -281,7 +294,7 @@ def _dispatch_background(session, mod: Dict[str, Any]) -> None:
 
     process = multiprocessing.Process(
         target=_child_entry,
-        args=(mod["func"], session_data, event, stdin_fd),
+        args=(mod["func"], session_data, event, stdin_fd, recording),
         name=mod["name"],
     )
     process.start()

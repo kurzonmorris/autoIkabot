@@ -282,7 +282,6 @@ def _record_new_config(session, config_data: Dict[str, Any]) -> None:
     After the config phase completes, the recorded inputs are saved.
     """
     from autoIkabot.ui.menu import get_registered_modules, _dispatch_background
-    from autoIkabot.ui.prompts import start_recording_inputs, stop_recording_inputs
 
     modules = get_registered_modules()
     bg_modules = [m for m in modules if m.get("background")]
@@ -304,20 +303,13 @@ def _record_new_config(session, config_data: Dict[str, Any]) -> None:
     mod = bg_modules[idx - 1]
     print("\n  Configure {} normally. Your inputs will be recorded.\n".format(mod["name"]))
 
-    # Start recording before spawning (child inherits via fork)
-    start_recording_inputs()
-
-    # Dispatch the module — user interacts normally during config phase
-    _dispatch_background(session, mod)
+    # Dispatch with recording=True — the child process will call
+    # start_recording_inputs() itself (works on both fork and spawn)
+    _dispatch_background(session, mod, recording=True)
 
     # Config phase is done (event.wait() returned in _dispatch_background)
     # Read back the recorded inputs from the temp file written by child
-    recorded = _read_recorded_inputs_from_child()
-    # Also stop recording in parent (in case fork didn't separate cleanly)
-    parent_recorded = stop_recording_inputs()
-
-    # Prefer child's recording (written to temp file), fall back to parent's
-    inputs = recorded if recorded is not None else parent_recorded
+    inputs = _read_recorded_inputs_from_child()
 
     if not inputs:
         print("  No inputs were recorded. Config may have been cancelled.")
