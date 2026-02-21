@@ -1,8 +1,11 @@
-"""Construction Manager — autoIkabot module (Phase 1).
+"""Construction Manager — autoIkabot module.
 
 Unified module for building new constructions in empty slots AND upgrading
 existing buildings to higher levels. Combines the functionality of ikabot's
 constructBuilding.py and constructionList.py into a single module.
+
+Phase 1: Core construction (build + upgrade)
+Phase 2: Auto-transport integration (scan empire, allocate, ship)
 
 User flow:
   1. Choose a city
@@ -10,7 +13,8 @@ User flow:
   3. Select positions to build/upgrade (comma-separated)
   4. For empty slots: choose building type -> place it
   5. For occupied slots: choose target level -> calculate costs -> upgrade
-  6. Background phase: wait for construction, upgrade level by level
+  6. If resources missing: scan empire -> auto-allocate -> transport
+  7. Background phase: execute transport, then upgrade level by level
 """
 
 import hashlib
@@ -29,6 +33,7 @@ import requests
 from autoIkabot.config import (
     ACTION_REQUEST_PLACEHOLDER,
     CITY_URL,
+    ISLAND_URL,
     COST_REDUCER_BUILDINGS,
     COST_REDUCTION_MAX,
     COST_REDUCTION_RESEARCH,
@@ -37,8 +42,15 @@ from autoIkabot.config import (
     MATERIAL_IMG_HASH,
 )
 from autoIkabot.helpers.formatting import addThousandSeparator, daysHoursMinutes, getDateTime
-from autoIkabot.helpers.game_parser import getCity, getIdsOfCities
-from autoIkabot.ui.prompts import banner, chooseCity, enter, read
+from autoIkabot.helpers.game_parser import getCity, getIdsOfCities, getIsland
+from autoIkabot.helpers.naval import getAvailableFreighters, getAvailableShips, waitForArrival
+from autoIkabot.helpers.routing import executeRoutes
+from autoIkabot.modules.resourceTransportManager import (
+    allocate_from_suppliers,
+    acquire_shipping_lock,
+    release_shipping_lock,
+)
+from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import (
     report_critical_error,
@@ -531,6 +543,248 @@ def _handle_empty_slot(session, city, position):
 
 
 # ---------------------------------------------------------------------------
+# Auto-transport integration (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _handle_missing_resources(session, destination_city, missing):
+    """Scan empire for missing resources, allocate, and confirm transport.
+
+    Uses RTM's allocate_from_suppliers() to automatically find supplier
+    cities and build routes. The user can exclude cities and must confirm
+    the plan before execution.
+
+    Parameters
+    ----------
+    session : Session
+    destination_city : dict
+        The city that needs resources (parsed city data).
+    missing : list[int]
+        Five-element list of missing resource amounts.
+
+    Returns
+    -------
+    dict or None
+        On success: {"routes": [...], "useFreighters": bool}
+        On cancel/failure: None
+    """
+    print("\n  Scanning empire for resources...")
+
+    # Let user exclude cities from supplying
+    banner()
+    print("Missing resources for construction:")
+    for i in range(len(MATERIALS_NAMES)):
+        if missing[i] > 0:
+            print("  {}: {}".format(MATERIALS_NAMES[i], addThousandSeparator(missing[i])))
+    print("")
+
+    city_ids, cities = ignoreCities(
+        session, msg="Exclude cities from supplying resources:"
+    )
+
+    # Gather supplier data (skip destination city)
+    banner()
+    print("  Scanning supplier cities...\n")
+    suppliers = []
+    totals = [0] * len(MATERIALS_NAMES)
+
+    for cid in city_ids:
+        if str(cid) == str(destination_city["id"]):
+            continue
+        try:
+            html = session.get(CITY_URL + str(cid))
+            city_data = getCity(html)
+            suppliers.append(city_data)
+            for i in range(len(MATERIALS_NAMES)):
+                totals[i] += city_data["availableResources"][i]
+        except Exception as e:
+            logger.warning("Failed to fetch city %s: %s", cid, e)
+
+    if not suppliers:
+        print("  No supplier cities available.")
+        enter()
+        return None
+
+    # Check if empire has enough
+    can_complete = all(
+        totals[i] >= missing[i] for i in range(len(MATERIALS_NAMES))
+    )
+
+    # Get island data for destination (needed for route tuples)
+    try:
+        html = session.get(ISLAND_URL + destination_city["islandId"])
+        destination_island = getIsland(html)
+    except Exception as e:
+        logger.warning("Failed to fetch destination island: %s", e)
+        destination_island = {"id": destination_city.get("islandId", "")}
+
+    if can_complete:
+        # Empire has enough — allocate and show plan
+        routes = allocate_from_suppliers(
+            missing, suppliers, destination_city, destination_island
+        )
+        if routes is None:
+            print("  Could not allocate resources across suppliers.")
+            enter()
+            return None
+
+        print("  Empire has enough resources to complete all upgrades.\n")
+        _display_route_summary(routes)
+
+        print("\n  Proceed with transport and construction? [Y/n]")
+        rta = read(values=["y", "Y", "n", "N", ""])
+        if rta.lower() == "n":
+            return None
+
+    else:
+        # Empire does NOT have enough — show what's available
+        print("  Your empire does not have enough resources for all upgrades.\n")
+        print("  Available across empire:")
+        for i in range(len(MATERIALS_NAMES)):
+            if missing[i] > 0:
+                avail_str = addThousandSeparator(totals[i])
+                need_str = addThousandSeparator(missing[i])
+                status = " (OK)" if totals[i] >= missing[i] else " (short)"
+                print(
+                    "    {}: {} of {} needed{}".format(
+                        MATERIALS_NAMES[i], avail_str, need_str, status
+                    )
+                )
+
+        print(
+            "\n  Transport what's available and build/upgrade as far as possible? [Y/n]"
+        )
+        rta = read(values=["y", "Y", "n", "N", ""])
+        if rta.lower() == "n":
+            return None
+
+        # Cap missing to what's actually available
+        capped = [min(missing[i], totals[i]) for i in range(len(MATERIALS_NAMES))]
+        if sum(capped) == 0:
+            print("  No resources available to send.")
+            enter()
+            return None
+
+        routes = allocate_from_suppliers(
+            capped, suppliers, destination_city, destination_island
+        )
+        if routes is None:
+            print("  Could not allocate resources across suppliers.")
+            enter()
+            return None
+
+        print("\n  Shipment plan:")
+        _display_route_summary(routes)
+
+        print("\n  Confirm transport? [Y/n]")
+        rta = read(values=["y", "Y", "n", "N", ""])
+        if rta.lower() == "n":
+            return None
+
+    # Choose ship type
+    print("\n  What type of ships do you want to use? (Default: Merchant ships)")
+    print("  (1) Merchant ships")
+    print("  (2) Freighters")
+    print("  (0) Cancel")
+    shiptype = read(min=0, max=2, digit=True, empty=True)
+    if shiptype == 0:
+        return None
+    if shiptype == '' or shiptype == 1:
+        useFreighters = False
+    else:
+        useFreighters = True
+
+    return {"routes": routes, "useFreighters": useFreighters}
+
+
+def _display_route_summary(routes):
+    """Display a summary of planned transport routes.
+
+    Parameters
+    ----------
+    routes : list[tuple]
+        Route tuples from allocate_from_suppliers().
+    """
+    for route in routes:
+        origin_city = route[0]
+        cargo = route[3:]  # wood, wine, marble, crystal, sulfur
+        origin_name = origin_city.get("name", origin_city.get("cityName", "?"))
+        parts = []
+        for i, amount in enumerate(cargo):
+            if amount > 0:
+                parts.append(
+                    "{} {}".format(MATERIALS_NAMES[i], addThousandSeparator(amount))
+                )
+        if parts:
+            print("    {} will send: {}".format(origin_name, " | ".join(parts)))
+
+
+def _execute_transport(session, transport_plan):
+    """Execute transport routes in the background with shipping lock.
+
+    Acquires the shipping lock with retries, verifies ship availability,
+    then executes all routes as a batch. The lock is held for the entire
+    batch because all routes serve a single construction job and must
+    complete together.
+
+    Parameters
+    ----------
+    session : Session
+    transport_plan : dict
+        {"routes": [...], "useFreighters": bool}
+    """
+    routes = transport_plan["routes"]
+    use_freighters = transport_plan["useFreighters"]
+
+    # Acquire shipping lock with retries (matches RTM pattern)
+    max_retries = 3
+    lock_acquired = False
+    for attempt in range(1, max_retries + 1):
+        session.setStatus(
+            "Acquiring shipping lock (attempt {}/{})...".format(attempt, max_retries)
+        )
+        if acquire_shipping_lock(session, use_freighters=use_freighters, timeout=300):
+            lock_acquired = True
+            break
+        logger.warning(
+            "Shipping lock attempt %d/%d failed", attempt, max_retries
+        )
+        if attempt < max_retries:
+            sleep_with_heartbeat(session, 60)
+
+    if not lock_acquired:
+        msg = "Could not acquire shipping lock after {} attempts — aborting transport".format(
+            max_retries
+        )
+        logger.error(msg)
+        report_critical_error(session, MODULE_NAME, msg)
+        return
+
+    try:
+        # Verify at least one ship is available before starting routes
+        session.setStatus("Checking ship availability...")
+        getter = getAvailableFreighters if use_freighters else getAvailableShips
+        ships = getter(session)
+        if ships == 0:
+            session.setStatus("Waiting for ships to become available...")
+            ships = waitForArrival(session, useFreighters=use_freighters)
+
+        logger.info(
+            "Starting transport: %d route(s), %d ship(s) available",
+            len(routes), ships,
+        )
+        session.setStatus("Transporting resources for construction...")
+        executeRoutes(session, routes, useFreighters=use_freighters)
+    except Exception as e:
+        logger.error("Transport error: %s", e)
+        report_critical_error(
+            session, MODULE_NAME,
+            "Error transporting resources: {}".format(str(e)),
+        )
+    finally:
+        release_shipping_lock(session, use_freighters=use_freighters)
+
+
+# ---------------------------------------------------------------------------
 # Background construction functions (ported from constructionList.py)
 # ---------------------------------------------------------------------------
 
@@ -861,7 +1115,12 @@ def constructionManager(session, event, stdin_fd):
                 if total_resources_needed[i] > 0:
                     print(f"    {name}: {addThousandSeparator(total_resources_needed[i])}")
 
-        # Check available resources
+        # Check available resources — refresh city data first
+        try:
+            html = session.get(CITY_URL + str(city_id))
+            city = getCity(html)
+        except Exception:
+            pass
         available = city.get("availableResources", [0] * 5)
         missing = [0] * len(MATERIALS_NAMES)
         has_missing = False
@@ -870,21 +1129,53 @@ def constructionManager(session, event, stdin_fd):
                 missing[i] = total_resources_needed[i] - available[i]
                 has_missing = True
 
+        transport_plan = None
         wait_resources = False
         if has_missing:
-            print("\n  Missing resources:")
+            banner()
+            print("  Resources needed for upgrades:")
+            for i, name in enumerate(MATERIALS_NAMES):
+                if total_resources_needed[i] > 0:
+                    print(f"    {name}: {addThousandSeparator(total_resources_needed[i])}")
+
+            print("\n  Available in {}:".format(city.get("cityName", "?")))
+            for i, name in enumerate(MATERIALS_NAMES):
+                if total_resources_needed[i] > 0:
+                    print(f"    {name}: {addThousandSeparator(available[i])}")
+
+            print("\n  Missing:")
             for i in range(len(MATERIALS_NAMES)):
                 if missing[i] > 0:
                     print(
-                        f"    {MATERIALS_NAMES[i]}: "
-                        f"{addThousandSeparator(missing[i])}"
+                        "    {}: {}".format(
+                            MATERIALS_NAMES[i],
+                            addThousandSeparator(missing[i]),
+                        )
                     )
 
-            print("\n  Proceed anyway? [Y/n]")
+            print("\n  Automatically transport resources from other cities? [Y/n]")
             rta = read(values=["y", "Y", "n", "N", ""])
             if rta.lower() == "n":
-                event.set()
-                return
+                # No transport — proceed without or cancel
+                print("  Proceed with construction anyway? [Y/n]")
+                rta2 = read(values=["y", "Y", "n", "N", ""])
+                if rta2.lower() == "n":
+                    event.set()
+                    return
+            else:
+                # Auto-transport flow
+                transport_plan = _handle_missing_resources(
+                    session, city, missing
+                )
+                if transport_plan is None:
+                    # User cancelled transport — ask if they want to proceed anyway
+                    print("\n  Transport cancelled. Proceed with construction anyway? [Y/n]")
+                    rta2 = read(values=["y", "Y", "n", "N", ""])
+                    if rta2.lower() == "n":
+                        event.set()
+                        return
+                else:
+                    wait_resources = True
         else:
             print("\n  You have enough resources.")
             print("  Proceed? [Y/n]")
@@ -916,6 +1207,10 @@ def constructionManager(session, event, stdin_fd):
     session.setStatus(info)
 
     try:
+        # Execute transport first if planned
+        if transport_plan is not None:
+            _execute_transport(session, transport_plan)
+
         for building in buildings_to_upgrade:
             _expand_building(session, city_id, building, wait_resources)
     except Exception:
