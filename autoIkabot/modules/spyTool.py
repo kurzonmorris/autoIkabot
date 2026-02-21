@@ -115,20 +115,9 @@ class FileLock:
         return False
 
 
-def get_desktop_path():
-    """Get desktop path cross-platform"""
-    if sys.platform == "win32":
-        return Path(os.path.join(os.environ["USERPROFILE"], "Desktop"))
-    elif sys.platform == "darwin":
-        return Path(os.path.expanduser("~/Desktop"))
-    else:
-        return Path(os.path.expanduser("~/Desktop"))
-
-
 def get_debug_folder():
-    """Get/create debug folder: Desktop/ikabot_debug/spyTool/"""
-    desktop = get_desktop_path()
-    debug_folder = desktop / "ikabot_debug" / "spyTool"
+    """Get/create debug folder: {DATA_DIR}/spy_debug/"""
+    debug_folder = DATA_DIR / "spy_debug"
     debug_folder.mkdir(parents=True, exist_ok=True)
     return debug_folder
 
@@ -301,7 +290,7 @@ def search_player_by_name(session, player_name):
     
     Parameters
     ----------
-    session : ikabot.web.session.Session
+    session : Session
     player_name : str
     
     Returns
@@ -374,7 +363,7 @@ def get_all_player_scores(session, player_id, player_name):
     
     Parameters
     ----------
-    session : ikabot.web.session.Session
+    session : Session
     player_id : str
     player_name : str
     
@@ -473,21 +462,26 @@ def get_all_islands_with_players(session):
             url = f"action=WorldMap&function=getJSONArea&x_min={x_min}&x_max={x_max}&y_min={y_min}&y_max={y_max}"
             response = session.post(url)
             data = json.loads(response)
-            
+
             for x, y_data in data.get("data", {}).items():
                 for y, island_data in y_data.items():
-                    player_count = int(island_data[7]) if len(island_data) > 7 else 0
-                    if player_count > 0:
-                        islands.append({
-                            "id": island_data[0],
-                            "x": int(x),
-                            "y": int(y),
-                            "name": island_data[1],
-                            "resource_type": island_data[2],
-                            "miracle_type": island_data[3],
-                            "wood_level": island_data[6] if len(island_data) > 6 else "0",
-                            "players": player_count
-                        })
+                    try:
+                        if len(island_data) < 4:
+                            continue
+                        player_count = int(island_data[7]) if len(island_data) > 7 else 0
+                        if player_count > 0:
+                            islands.append({
+                                "id": island_data[0],
+                                "x": int(x),
+                                "y": int(y),
+                                "name": island_data[1],
+                                "resource_type": island_data[2],
+                                "miracle_type": island_data[3],
+                                "wood_level": island_data[6] if len(island_data) > 6 else "0",
+                                "players": player_count
+                            })
+                    except (IndexError, TypeError, ValueError) as e:
+                        debug_log_error(f"Error parsing island at [{x}:{y}]", e)
             
             time.sleep(0.3)
         
@@ -514,7 +508,6 @@ def load_server_cache():
         return None
     
     try:
-        import gzip
         with gzip.open(cache_path, "rt", encoding="utf-8") as f:
             cache = json.load(f)
         debug_log(f"Loaded server cache: {len(cache.get('islands', []))} islands, {cache.get('total_players', 0)} players")
@@ -531,7 +524,6 @@ def save_server_cache(cache):
         return False
     
     try:
-        import gzip
         with gzip.open(cache_path, "wt", encoding="utf-8") as f:
             json.dump(cache, f)
         debug_log(f"Saved server cache: {len(cache.get('islands', []))} islands")
@@ -568,7 +560,7 @@ def build_server_cache(session, progress_callback=None, request_delay=1.5):
     
     Parameters
     ----------
-    session : ikabot.web.session.Session
+    session : Session
     progress_callback : callable, optional
         Called with (current, total, message)
     request_delay : float
@@ -1024,7 +1016,7 @@ def find_player_on_all_islands(session, player_name, player_id=None, progress_ca
     
     Parameters
     ----------
-    session : ikabot.web.session.Session
+    session : Session
     player_name : str
     player_id : str, optional
         If provided, matches by ID instead of name (more reliable)
@@ -1141,7 +1133,7 @@ def compile_player_intel(session, player_name, full_scan=False, progress_callbac
     
     Parameters
     ----------
-    session : ikabot.web.session.Session
+    session : Session
     player_name : str
     full_scan : bool
         If True, scans ALL islands on the server (slow but complete)
