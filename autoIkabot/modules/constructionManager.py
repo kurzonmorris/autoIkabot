@@ -598,6 +598,12 @@ def _handle_missing_resources(session, destination_city, missing):
         session, msg="Exclude cities from supplying resources:"
     )
 
+    # Automatically exclude the destination city
+    dest_id = str(destination_city["id"])
+    city_ids = [cid for cid in city_ids if str(cid) != dest_id]
+    dest_name = destination_city.get("cityName", destination_city.get("name", "?"))
+    print("  (Auto-excluded destination city: {})".format(dest_name))
+
     # Gather supplier data (skip destination city)
     banner()
     print("  Scanning supplier cities...\n")
