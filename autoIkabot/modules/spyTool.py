@@ -11,17 +11,24 @@ import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ikabot.config import *
-from ikabot.helpers.botComm import *
-from ikabot.helpers.gui import *
-from ikabot.helpers.pedirInfo import *
-from ikabot.helpers.process import set_child_mode
-from ikabot.helpers.signals import setInfoSignal
-from ikabot.helpers.varios import *
-from ikabot.helpers.getJson import getCity, getIsland
+from autoIkabot.config import (
+    ACTION_REQUEST_PLACEHOLDER,
+    CITY_URL,
+    DATA_DIR,
+    ISLAND_URL,
+)
+from autoIkabot.helpers.game_parser import getCity, getIsland, getIdsOfCities
+from autoIkabot.ui.prompts import banner, enter, read
+from autoIkabot.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 MODULE_VERSION = "v1.3"
 MODULE_NAME = "Spy Tool"
+MODULE_SECTION = "Spy/Monitoring"
+MODULE_NUMBER = 20
+MODULE_DESCRIPTION = "Intelligence gathering and spy operations"
+
 DEBUG_ENABLED = True
 DEBUG_MAX_AGE_DAYS = 2
 DEBUG_MAX_SIZE_MB = 10
@@ -30,6 +37,21 @@ LOCK_TIMEOUT_SECONDS = 15
 _debug_log_path = None
 _storage_path = None
 _lock_file = None
+
+# ikabot variable name aliases for the ported code
+actionRequest = ACTION_REQUEST_PLACEHOLDER
+island_url = ISLAND_URL
+city_url = CITY_URL
+
+
+class bcolors:
+    """ANSI colour codes (compatibility shim for ported ikabot code)."""
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    WARNING = "\033[93m"
+    YELLOW = "\033[93m"
+    ENDC = "\033[0m"
 
 
 class FileLock:
@@ -187,25 +209,9 @@ def debug_log_response(function_name, response_snippet):
     debug_log(f"[{function_name}] Response: {snippet}", "DEBUG")
 
 
-def get_ikabot_install_path():
-    """Detect ikabot installation path"""
-    try:
-        import ikabot
-        ikabot_path = Path(ikabot.__file__).parent
-        debug_log(f"Detected ikabot path: {ikabot_path}")
-        return ikabot_path
-    except Exception as e:
-        debug_log_error("Could not detect ikabot path", e)
-        return None
-
-
 def get_default_storage_path():
-    """Get default storage path: {ikabot_install}/spy_data/"""
-    ikabot_path = get_ikabot_install_path()
-    if ikabot_path:
-        storage_path = ikabot_path / "spy_data"
-        return storage_path
-    return None
+    """Get default storage path: {DATA_DIR}/spy_data/"""
+    return DATA_DIR / "spy_data"
 
 
 def test_storage_location(path):
@@ -3569,10 +3575,10 @@ def view_saved_reports():
                 enter()
 
 
-def main_menu(session, event):
+def main_menu(session):
     """Main menu for Spy Tool"""
     debug_log("Spy Tool main menu loaded")
-    
+
     if not initialize_storage():
         print(f"{bcolors.RED}Warning: Could not initialize default storage location.{bcolors.ENDC}")
         print("Please configure storage in Settings.\n")
@@ -3631,27 +3637,24 @@ def main_menu(session, event):
                 return
 
 
-def spyTool(session, event, stdin_fd, predetermined_input):
-    """
-    Spy Tool - Intelligence gathering and spy operations
-    
+def spyTool(session):
+    """Spy Tool — Intelligence gathering and spy operations.
+
+    This is a synchronous (foreground) menu module. It blocks the
+    main menu while running and returns when the user exits.
+
     Parameters
     ----------
-    session : ikabot.web.session.Session
-    event : multiprocessing.Event
-    stdin_fd: int
-    predetermined_input : multiprocessing.managers.SyncManager.list
+    session : Session
+        The game session.
     """
-    sys.stdin = os.fdopen(stdin_fd)
-    config.predetermined_input = predetermined_input
-    
     debug_log("=" * 40)
     debug_log(f"Spy Tool {MODULE_VERSION} started")
     debug_log(f"Session user: {session.username if hasattr(session, 'username') else 'unknown'}")
     debug_log("=" * 40)
-    
+
     try:
-        main_menu(session, event)
+        main_menu(session)
     except KeyboardInterrupt:
         debug_log("Spy Tool interrupted by user")
     except Exception as e:
@@ -3660,5 +3663,4 @@ def spyTool(session, event, stdin_fd, predetermined_input):
         print(f"Debug folder: {get_debug_folder()}")
         enter()
     finally:
-        event.set()
         debug_log("Spy Tool ended")

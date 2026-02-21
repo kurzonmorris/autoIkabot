@@ -230,6 +230,20 @@ def main() -> None:
             background=True,
         )
 
+        # Spy/Monitoring modules
+        from autoIkabot.modules.spyTool import (
+            spyTool,
+            MODULE_NAME as SPY_NAME,
+            MODULE_SECTION as SPY_SECTION,
+            MODULE_NUMBER as SPY_NUMBER,
+            MODULE_DESCRIPTION as SPY_DESC,
+        )
+        register_module(
+            name=SPY_NAME, section=SPY_SECTION,
+            number=SPY_NUMBER, description=SPY_DESC,
+            func=spyTool,
+        )
+
         # Auto-launch saved module configs before entering the menu
         from autoIkabot.modules.autoLoader import launch_saved_configs
         launch_saved_configs(session)
