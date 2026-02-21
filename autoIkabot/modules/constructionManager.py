@@ -851,8 +851,21 @@ def _wait_for_construction(session, city_id, final_lvl):
     return city
 
 
+def _seconds_to_next_quarter_hour():
+    """Return seconds until the next :00, :15, :30, or :45 mark."""
+    now = time.time()
+    minutes_past_hour = (now % 3600) / 60
+    minutes_to_next = 15 - (minutes_past_hour % 15)
+    return max(int(minutes_to_next * 60), 30)  # at least 30s
+
+
 def _expand_building(session, city_id, building, wait_for_resources):
     """Upgrade a building level-by-level in the background.
+
+    When resources are insufficient, the module enters a PAUSED state
+    instead of stopping. It checks every 15 minutes (aligned to the
+    hour marks :00, :15, :30, :45) whether resources have become
+    available and resumes automatically when they have.
 
     Parameters
     ----------
@@ -861,7 +874,8 @@ def _expand_building(session, city_id, building, wait_for_resources):
     building : dict
         Building data with 'upgradeTo' field set.
     wait_for_resources : bool
-        If True, wait for incoming ships when canUpgrade is False.
+        If True, pause and check periodically when canUpgrade is False.
+        If False, report error and stop.
     """
     current_level = int(building["level"])
     if building.get("isBusy"):
@@ -886,41 +900,76 @@ def _expand_building(session, city_id, building, wait_for_resources):
             report_critical_error(session, MODULE_NAME, msg)
             return
 
-        # Wait for resources if ships are incoming
-        if building_data.get("canUpgrade") is False and wait_for_resources:
-            while building_data.get("canUpgrade") is False:
-                sleep_with_heartbeat(session, 60)
-                try:
-                    from autoIkabot.helpers.naval import getMinimumWaitingTime
-                    seconds = getMinimumWaitingTime(session)
-                except Exception:
-                    seconds = 0
+        # --- Pause/resume loop when resources are insufficient ---
+        if building_data.get("canUpgrade") is False:
+            if not wait_for_resources:
+                # No transport was planned — stop with error
+                msg = (
+                    "City: {}\nBuilding: {}\n"
+                    "Could not upgrade due to lack of resources.\n"
+                    "Missed {:d} levels (stopped at {})."
+                ).format(
+                    city.get("cityName", "?"),
+                    building_name,
+                    levels_to_go - lv,
+                    int(building_data.get("level", 0)),
+                )
+                logger.warning(msg)
+                report_critical_error(session, MODULE_NAME, msg)
+                return
 
+            # Enter PAUSED state — check every 15 minutes
+            current_lv_display = int(building_data.get("level", 0)) + 1
+            session.setStatus(
+                "[PAUSED] {} lv{}: waiting for resources".format(
+                    building_name, current_lv_display
+                )
+            )
+            logger.info(
+                "PAUSED: %s lv%d — insufficient resources, checking every 15m",
+                building_name, current_lv_display,
+            )
+
+            while building_data.get("canUpgrade") is False:
+                seconds_to_wait = _seconds_to_next_quarter_hour()
+                # Sleep in 30-second chunks for responsiveness (Phase 4 trigger)
+                elapsed = 0
+                while elapsed < seconds_to_wait:
+                    chunk = min(30, seconds_to_wait - elapsed)
+                    sleep_with_heartbeat(session, chunk)
+                    elapsed += chunk
+
+                # Re-check city data
                 try:
                     html = session.get(CITY_URL + str(city_id))
                     city = getCity(html)
                     building_data = city["position"][position]
+                except (IndexError, KeyError, TypeError):
+                    logger.warning("Could not read building data during pause, retrying")
+                    continue
                 except Exception:
-                    pass
+                    continue
 
-                if seconds == 0:
-                    break
-                sleep_with_heartbeat(session, seconds + 5)
+                if building_data.get("canUpgrade") is False:
+                    session.setStatus(
+                        "[PAUSED] {} lv{}: waiting for resources".format(
+                            building_name, current_lv_display
+                        )
+                    )
+                    logger.debug(
+                        "PAUSED: %s lv%d still waiting — next check in ~15m",
+                        building_name, current_lv_display,
+                    )
 
-        if building_data.get("canUpgrade") is False:
-            msg = (
-                "City: {}\nBuilding: {}\n"
-                "Could not upgrade due to lack of resources.\n"
-                "Missed {:d} levels (stopped at {})."
-            ).format(
-                city.get("cityName", "?"),
-                building_name,
-                levels_to_go - lv,
-                int(building_data.get("level", 0)),
+            # Resources available — resume
+            session.setStatus(
+                "Upgrading {} to level {} in {}".format(
+                    building_name,
+                    current_lv_display,
+                    city.get("cityName", "?"),
+                )
             )
-            logger.warning(msg)
-            report_critical_error(session, MODULE_NAME, msg)
-            return
+            logger.info("RESUMED: %s lv%d — resources now available", building_name, current_lv_display)
 
         # Send upgrade request
         params = {

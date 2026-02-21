@@ -369,6 +369,30 @@ def is_process_frozen(entry: Dict[str, Any]) -> bool:
     return (time.time() - last_hb) > HEARTBEAT_STALE_THRESHOLD
 
 
+def get_process_health(entry: Dict[str, Any]) -> str:
+    """Return the health status of a process entry.
+
+    Checks the status string for a ``[PAUSED]`` prefix first, then
+    falls back to heartbeat-based frozen detection.
+
+    Parameters
+    ----------
+    entry : dict
+        A process list entry.
+
+    Returns
+    -------
+    str
+        ``"PAUSED"``, ``"FROZEN"``, or ``"OK"``.
+    """
+    status = entry.get("status", "")
+    if "[PAUSED]" in status:
+        return "PAUSED"
+    if is_process_frozen(entry):
+        return "FROZEN"
+    return "OK"
+
+
 def sleep_with_heartbeat(session, seconds: float, interval: float = 300) -> None:
     """Sleep for *seconds*, updating the heartbeat every *interval* seconds.
 
