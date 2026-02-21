@@ -814,7 +814,7 @@ def constructionManager(session, event, stdin_fd):
             banner()
             print(f"Building: {building_name}")
             print(f"Current level: {current_level}")
-            final_level = read(min=current_level, max=99, msg="Upgrade to level: ")
+            final_level = read(min=current_level, max=101, msg="Upgrade to level: ")
 
             if final_level <= current_level:
                 continue
