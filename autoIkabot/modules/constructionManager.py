@@ -33,6 +33,7 @@ import requests
 from autoIkabot.config import (
     ACTION_REQUEST_PLACEHOLDER,
     CITY_URL,
+    DATA_DIR,
     ISLAND_URL,
     COST_REDUCER_BUILDINGS,
     COST_REDUCTION_MAX,
@@ -65,6 +66,22 @@ MODULE_NAME = "Construction Manager"
 MODULE_SECTION = "Construction"
 MODULE_NUMBER = 21
 MODULE_DESCRIPTION = "Build new buildings or upgrade existing ones"
+
+
+# ---------------------------------------------------------------------------
+# Trigger file for "check now" from Task Status (Phase 4)
+# ---------------------------------------------------------------------------
+
+def get_construction_trigger_path(session):
+    """Return the path for the construction check trigger file.
+
+    Task Status can write this file to wake up a paused construction
+    module, causing it to re-check resources immediately instead of
+    waiting for the next 15-minute mark.
+    """
+    return str(DATA_DIR / "construction_check_{}_{}.trigger".format(
+        session.servidor, session.username
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -930,14 +947,26 @@ def _expand_building(session, city_id, building, wait_for_resources):
                 building_name, current_lv_display,
             )
 
+            trigger_file = get_construction_trigger_path(session)
+
             while building_data.get("canUpgrade") is False:
                 seconds_to_wait = _seconds_to_next_quarter_hour()
-                # Sleep in 30-second chunks for responsiveness (Phase 4 trigger)
+                # Sleep in 30-second chunks; check trigger file each chunk
                 elapsed = 0
+                triggered = False
                 while elapsed < seconds_to_wait:
                     chunk = min(30, seconds_to_wait - elapsed)
                     sleep_with_heartbeat(session, chunk)
                     elapsed += chunk
+                    # Check for "check now" trigger from Task Status
+                    if os.path.exists(trigger_file):
+                        try:
+                            os.remove(trigger_file)
+                        except OSError:
+                            pass
+                        logger.info("Trigger file detected — checking resources now")
+                        triggered = True
+                        break
 
                 # Re-check city data
                 try:

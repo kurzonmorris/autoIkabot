@@ -11,7 +11,7 @@ import time
 
 from autoIkabot.ui.prompts import banner, enter, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import is_process_frozen, update_process_list
+from autoIkabot.utils.process import get_process_health, is_process_frozen, update_process_list
 
 logger = get_logger(__name__)
 
@@ -103,6 +103,23 @@ def _restart_frozen_task(session, proc_entry: dict, cfg: dict) -> bool:
     return success
 
 
+def _trigger_construction_check(session):
+    """Write a trigger file to wake up paused construction tasks.
+
+    The construction module's pause loop checks for this file every
+    30 seconds and re-checks resources immediately when it appears.
+    """
+    from autoIkabot.modules.constructionManager import get_construction_trigger_path
+
+    trigger_path = get_construction_trigger_path(session)
+    try:
+        with open(trigger_path, "w") as f:
+            f.write(str(time.time()))
+        print("  Check triggered. Paused tasks will re-check within ~30 seconds.")
+    except OSError as e:
+        print(f"  Could not write trigger file: {e}")
+
+
 def taskStatus(session) -> None:
     """Display health status of all running background tasks.
 
@@ -126,78 +143,104 @@ def taskStatus(session) -> None:
         now = time.time()
         healthy_count = 0
         frozen_indices = []
+        paused_count = 0
 
         print("  Task Status")
         print("  " + "=" * 50)
         print()
         print(
             f"  {'#':>3}  {'PID':>7}  {'Task':<25}"
-            f"  {'Health':<8}  {'Uptime':<10}  Last Heartbeat"
+            f"  {'Health':<8}  {'Uptime':<10}  Status"
         )
         print(
             f"  {'---':>3}  {'-------':>7}  {'-' * 25}"
-            f"  {'-' * 8}  {'-' * 10}  {'-' * 18}"
+            f"  {'-' * 8}  {'-' * 10}  {'-' * 30}"
         )
 
         for i, proc in enumerate(process_list):
-            frozen = is_process_frozen(proc)
-            health = "FROZEN" if frozen else "OK"
+            health = get_process_health(proc)
 
-            if not frozen:
-                healthy_count += 1
-            else:
+            if health == "FROZEN":
                 frozen_indices.append(i)
+            elif health == "PAUSED":
+                paused_count += 1
+                healthy_count += 1  # PAUSED is not unhealthy, just waiting
+            else:
+                healthy_count += 1
 
             # Uptime
             start_time = proc.get("date")
             uptime = _format_duration(now - start_time) if start_time else "?"
 
-            # Last heartbeat age
-            last_hb = proc.get("last_heartbeat")
-            if last_hb is not None:
-                hb_age = _format_duration(now - last_hb) + " ago"
-            else:
-                hb_age = "no data"
+            # Status message
+            status = proc.get("status", "running")
+            if len(status) > 30:
+                status = status[:27] + "..."
 
             print(
                 f"  {i + 1:>3}  {proc['pid']:>7}  {proc.get('action', '?'):<25}"
-                f"  {health:<8}  {uptime:<10}  {hb_age}"
+                f"  {health:<8}  {uptime:<10}  {status}"
             )
 
         total = len(process_list)
         print()
-        print(f"  {healthy_count} of {total} tasks healthy.")
+        summary = f"  {healthy_count} of {total} tasks healthy."
+        if paused_count > 0:
+            summary += f" {paused_count} paused."
+        if frozen_indices:
+            summary += f" {len(frozen_indices)} frozen."
+        print(summary)
 
-        if not frozen_indices:
+        if not frozen_indices and paused_count == 0:
             print()
             print("  All tasks running normally.")
             enter()
             return
 
-        # Build action menu for frozen tasks
+        # Build action menu
         print()
-        frozen_actions = []
+        actions = []
+        action_idx = 0
+
+        # "Check paused tasks now" option if any paused
+        has_check_now = False
+        if paused_count > 0:
+            action_idx += 1
+            actions.append(("check_paused", None, None, None))
+            print(f"  ({action_idx}) Check paused tasks now (trigger immediate resource check)")
+            has_check_now = True
+
+        # Frozen task actions
         for fi in frozen_indices:
             proc = process_list[fi]
             cfg = _get_autoload_config_for(session, proc.get("action", ""))
             action_type = "restart" if cfg else "kill"
-            frozen_actions.append((fi, proc, cfg, action_type))
+            action_idx += 1
+            actions.append(("frozen", fi, proc, cfg))
 
-            idx = len(frozen_actions)
             action_name = proc.get("action", "?")
             if cfg:
-                print(f"  ({idx}) Restart frozen: {action_name} (auto-loaded config available)")
+                print(f"  ({action_idx}) Restart frozen: {action_name} (auto-loaded config available)")
             else:
-                print(f"  ({idx}) Kill frozen: {action_name} (restart manually from menu)")
+                print(f"  ({action_idx}) Kill frozen: {action_name} (restart manually from menu)")
 
         print("  (0) Back")
         print()
 
-        choice = read(min=0, max=len(frozen_actions), digit=True)
+        choice = read(min=0, max=len(actions), digit=True)
         if choice == 0:
             return
 
-        fi, proc, cfg, action_type = frozen_actions[choice - 1]
+        action_entry = actions[choice - 1]
+
+        if action_entry[0] == "check_paused":
+            # Write trigger file to wake up paused construction tasks
+            _trigger_construction_check(session)
+            enter()
+            continue
+
+        # Handle frozen task action
+        _, fi, proc, cfg = action_entry
         action_name = proc.get("action", "?")
         pid = proc["pid"]
 
