@@ -215,6 +215,21 @@ def main() -> None:
             func=autoLoader,
         )
 
+        # Construction Manager — background
+        from autoIkabot.modules.constructionManager import (
+            constructionManager,
+            MODULE_NAME as CONSTRUCTION_NAME,
+            MODULE_SECTION as CONSTRUCTION_SECTION,
+            MODULE_NUMBER as CONSTRUCTION_NUMBER,
+            MODULE_DESCRIPTION as CONSTRUCTION_DESC,
+        )
+        register_module(
+            name=CONSTRUCTION_NAME, section=CONSTRUCTION_SECTION,
+            number=CONSTRUCTION_NUMBER, description=CONSTRUCTION_DESC,
+            func=constructionManager,
+            background=True,
+        )
+
         # Auto-launch saved module configs before entering the menu
         from autoIkabot.modules.autoLoader import launch_saved_configs
         launch_saved_configs(session)
