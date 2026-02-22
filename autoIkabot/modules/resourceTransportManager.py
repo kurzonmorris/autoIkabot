@@ -29,7 +29,7 @@ from autoIkabot.helpers.routing import executeRoutes
 from autoIkabot.notifications.notify import checkTelegramData, sendToBot
 from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import report_critical_error
+from autoIkabot.utils.process import report_critical_error, sleep_with_heartbeat
 
 logger = get_logger(__name__)
 
@@ -102,7 +102,7 @@ def acquire_shipping_lock(session, use_freighters=False, timeout=300):
         except Exception:
             pass
 
-        time.sleep(5)
+        time.sleep(5)  # Lock polling is short enough to not stall heartbeat
 
     return False
 
@@ -258,7 +258,7 @@ def resourceTransportManager(session, event, stdin_fd):
                 )
                 sendToBot(session, msg)
                 logger.info("Auto-restarting in %d seconds...", wait_seconds)
-                time.sleep(wait_seconds)
+                sleep_with_heartbeat(session, wait_seconds)
 
     except KeyboardInterrupt:
         event.set()
@@ -1362,6 +1362,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
         )
         ship_check_start = time.time()
 
+        max_ship_wait = 3600  # 1 hour max wait for ships
         while True:
             if useFreighters:
                 available_ships = getAvailableFreighters(session)
@@ -1371,13 +1372,23 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
             if available_ships > 0:
                 print(f"    Found {available_ships} {ship_type_name}")
                 break
-            else:
-                elapsed = int(time.time() - ship_check_start)
-                print(f"    Waiting for {ship_type_name}... (checked for {elapsed}s)")
-                session.setStatus(
-                    f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for {ship_type_name} ({elapsed}s)..."
-                )
-                time.sleep(120)
+
+            elapsed = int(time.time() - ship_check_start)
+            if elapsed > max_ship_wait:
+                print(f"    Timed out waiting for {ship_type_name} after {elapsed}s")
+                break
+            print(f"    Waiting for {ship_type_name}... (checked for {elapsed}s)")
+            session.setStatus(
+                f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for {ship_type_name} ({elapsed}s)..."
+            )
+            sleep_with_heartbeat(session, 120)
+
+        if available_ships == 0:
+            error_msg = f"No {ship_type_name} available after waiting {max_ship_wait}s"
+            print(f"    SKIPPED: {error_msg}")
+            if telegram_enabled:
+                sendToBot(session, f"AUTO SEND SKIPPED\nRoute [{route_index + 1}/{total_routes}]: {origin_city['name']} -> {destination_city['name']}\n{error_msg}")
+            continue
 
         # Acquire shipping lock
         max_retries = 3
@@ -1396,7 +1407,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
                 retry_count += 1
                 if retry_count < max_retries:
                     print(f"    Lock attempt {retry_count}/{max_retries} failed, retrying in 60s...")
-                    time.sleep(60)
+                    sleep_with_heartbeat(session, 60)
 
         if not lock_acquired:
             error_msg = f"Could not acquire shipping lock after {max_retries} attempts"
@@ -1484,7 +1495,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
         current_time = datetime.datetime.now()
 
         if current_time < next_run_time and not first_run:
-            time.sleep(60)
+            sleep_with_heartbeat(session, 60)
             continue
 
         print(f"\n--- Starting shipment cycle ---")
@@ -1574,6 +1585,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                 ship_type = 'freighters' if useFreighters else 'merchant ships'
                 ships_available = False
                 ship_check_start = time.time()
+                max_ship_wait = 3600  # 1 hour max
 
                 while not ships_available:
                     if useFreighters:
@@ -1588,13 +1600,18 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                             f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
-                        wait_time = 120
                         elapsed = int(time.time() - ship_check_start)
+                        if elapsed > max_ship_wait:
+                            print(f"    Timed out waiting for {ship_type} after {elapsed}s, skipping")
+                            break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
-                        time.sleep(wait_time)
+                        sleep_with_heartbeat(session, 120)
+
+                if not ships_available:
+                    continue
 
                 max_retries = 3
                 retry_count = 0
@@ -1615,7 +1632,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         if retry_count < max_retries and telegram_enabled:
                             msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Failed to acquire shipping lock on attempt {retry_count}/{max_retries}\nAction: Retrying in 1 minute..."
                             sendToBot(session, msg)
-                        time.sleep(60)
+                        sleep_with_heartbeat(session, 60)
 
                 if lock_acquired:
                     try:
@@ -1646,19 +1663,9 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         try:
                             executeRoutes(session, [route], useFreighters)
 
-                            if useFreighters:
-                                ships_after = getAvailableFreighters(session)
-                            else:
-                                ships_after = getAvailableShips(session)
-
                             ship_capacity, freighter_capacity = getShipCapacity(session)
                             capacity = freighter_capacity if useFreighters else ship_capacity
                             ships_needed = (total_to_send + capacity - 1) // capacity
-
-                            ships_used_actual = ships_before - ships_after
-
-                            if ships_used_actual < ships_needed:
-                                raise Exception(f"Expected to use {ships_needed} ships but only {ships_used_actual} were used")
 
                             total_shipments += 1
                             consecutive_failures = 0
@@ -1724,7 +1731,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
         )
 
         first_run = False
-        time.sleep(60 * 60)
+        sleep_with_heartbeat(session, 60 * 60)
 
 
 def do_it_distribute(session, origin_city, destination_cities, interval_hours, resource_config, useFreighters, telegram_enabled, notify_on_start):
@@ -1740,7 +1747,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         current_time = datetime.datetime.now()
 
         if current_time < next_run_time and not first_run:
-            time.sleep(60)
+            sleep_with_heartbeat(session, 60)
             continue
 
         print(f"\n--- Starting distribution cycle ---")
@@ -1806,6 +1813,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                 ship_type = 'freighters' if useFreighters else 'merchant ships'
                 ships_available = False
                 ship_check_start = time.time()
+                max_ship_wait = 3600  # 1 hour max
 
                 while not ships_available:
                     if useFreighters:
@@ -1820,13 +1828,18 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                             f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
-                        wait_time = 120
                         elapsed = int(time.time() - ship_check_start)
+                        if elapsed > max_ship_wait:
+                            print(f"    Timed out waiting for {ship_type} after {elapsed}s, skipping")
+                            break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
                             f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
-                        time.sleep(wait_time)
+                        sleep_with_heartbeat(session, 120)
+
+                if not ships_available:
+                    continue
 
                 max_retries = 3
                 retry_count = 0
@@ -1847,7 +1860,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         if retry_count < max_retries and telegram_enabled:
                             msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Failed to acquire shipping lock on attempt {retry_count}/{max_retries}\nAction: Retrying in 1 minute..."
                             sendToBot(session, msg)
-                        time.sleep(60)
+                        sleep_with_heartbeat(session, 60)
 
                 if lock_acquired:
                     try:
@@ -1878,19 +1891,9 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         try:
                             executeRoutes(session, [route], useFreighters)
 
-                            if useFreighters:
-                                ships_after = getAvailableFreighters(session)
-                            else:
-                                ships_after = getAvailableShips(session)
-
                             ship_capacity, freighter_capacity = getShipCapacity(session)
                             capacity = freighter_capacity if useFreighters else ship_capacity
                             ships_needed = (total_to_send + capacity - 1) // capacity
-
-                            ships_used_actual = ships_before - ships_after
-
-                            if ships_used_actual < ships_needed:
-                                raise Exception(f"Expected to use {ships_needed} ships but only {ships_used_actual} were used")
 
                             total_shipments += 1
                             consecutive_failures = 0
@@ -1956,4 +1959,4 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         )
 
         first_run = False
-        time.sleep(60 * 60)
+        sleep_with_heartbeat(session, 60 * 60)
