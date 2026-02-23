@@ -33,7 +33,6 @@ from autoIkabot.config import (
     HEALTH_CHECK_INTERVAL,
     HEALTH_CHECK_VIEW,
     RATE_LIMIT_MIN_DELAY,
-    SESSION_COOKIE_NAMES,
     SSL_VERIFY,
 )
 from autoIkabot.utils.logging import get_logger
@@ -518,83 +517,91 @@ class Session:
         return None
 
     def export_cookies(self) -> str:
-        """Export session cookies as a JSON string.
+        """Export the ikariam session cookie as a JSON string.
+
+        Only the ``ikariam`` cookie is exported.  This is by design: each
+        client (browser, bot instance) should maintain its own PHPSESSID
+        so that CSRF tokens (actionRequest) don't conflict.
 
         Returns
         -------
         str
-            JSON string of session cookies.
+            JSON string like ``'{"ikariam": "value"}'``, or ``'{}'``.
         """
-        cookie_dict = {}
-        for name in SESSION_COOKIE_NAMES:
-            val = self.s.cookies.get(name, domain=self.host)
-            if val is None:
-                # Fallback: iterate all cookies
-                for cookie in self.s.cookies:
-                    if cookie.name == name:
-                        val = cookie.value
-                        break
-            if val is not None:
-                cookie_dict[name] = val
-        return json.dumps(cookie_dict, indent=2)
+        ikariam = self._get_ikariam_cookie()
+        if ikariam is None:
+            return "{}"
+        return json.dumps({"ikariam": ikariam})
 
     def export_cookies_js(self) -> str:
-        """Export all session cookies as a JavaScript snippet.
+        """Export the ikariam cookie as a JavaScript snippet for browser console.
 
-        Generates a browser console snippet that sets all session cookies
-        (ikariam, PHPSESSID, gf-token-production, etc.) with path=/.
+        Only the ``ikariam`` cookie is set in the browser.  The browser
+        keeps its own PHPSESSID so the bot and browser maintain independent
+        PHP sessions and don't conflict on CSRF tokens.
 
         Returns
         -------
         str
-            JavaScript code that sets cookies in a browser console.
+            JavaScript code that sets the ikariam cookie in a browser.
         """
-        cookie_dict = json.loads(self.export_cookies())
-        if not cookie_dict:
-            return "// No session cookies found"
-        cookie_json = json.dumps(cookie_dict)
+        ikariam = self._get_ikariam_cookie()
+        if ikariam is None:
+            return "// No ikariam session cookie found"
+        cookie_json = json.dumps({"ikariam": ikariam})
         return (
             'cookies={};i=0;for(let cookie in cookies)'
-            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie]+"; path=/";i++}}'
+            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
         ).format(cookie_json)
 
     def import_cookies(self, cookie_input: str) -> bool:
-        """Import cookies from a JSON string or raw ikariam cookie value.
+        """Import an ikariam cookie value from user input.
+
+        Accepts either a JSON dict containing an ``"ikariam"`` key, or a
+        raw cookie value (optionally prefixed with ``ikariam=``).  Only the
+        ``ikariam`` cookie is applied; other keys in JSON input are ignored
+        to prevent PHPSESSID sharing.
 
         Parameters
         ----------
         cookie_input : str
-            Either a JSON dict of cookies, or a raw ikariam cookie value.
+            Cookie string from the user.
 
         Returns
         -------
         bool
-            True if the imported cookies produced a valid session.
+            True if the imported cookie produced a valid session.
         """
         cookie_input = cookie_input.strip()
 
-        # Try JSON first
+        # Try JSON first — extract only the ikariam key
         try:
             cookie_dict = json.loads(cookie_input)
+            ikariam_value = cookie_dict.get("ikariam", "")
         except (json.JSONDecodeError, ValueError):
             # Treat as raw ikariam cookie value
-            cookie_input = cookie_input.replace("ikariam=", "")
-            cookie_dict = {"ikariam": cookie_input}
+            ikariam_value = cookie_input.replace("ikariam=", "")
 
-        # Set cookies on the session
-        for name, value in cookie_dict.items():
-            self.s.cookies.set(name, value, domain=self.host, path="/")
+        if not ikariam_value:
+            logger.warning("No ikariam cookie value found in input")
+            return False
+
+        # Set the ikariam cookie using domain-fallback pattern
+        if self.host in self.s.cookies._cookies:
+            self.s.cookies.set("ikariam", ikariam_value, domain=self.host, path="/")
+        else:
+            self.s.cookies.set("ikariam", ikariam_value, domain="", path="/")
 
         # Validate by making a test request
         html = self.s.get(self.url_base, verify=SSL_VERIFY, timeout=30).text
         if self._is_expired(html):
-            logger.warning("Imported cookies are invalid/expired")
+            logger.warning("Imported ikariam cookie is invalid/expired")
             return False
 
         # Update cached state from the response
         self._try_extract_token(html)
         self._try_extract_city_id(html)
-        logger.info("Cookies imported and validated successfully")
+        logger.info("ikariam cookie imported and validated successfully")
         return True
 
     def get_session_cookies(self) -> Dict[str, str]:

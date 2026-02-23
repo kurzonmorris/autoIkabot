@@ -1,12 +1,16 @@
-"""Cookie Import/Export module (Phase 5.3).
+"""Cookie Import/Export module.
 
-Allows exporting session cookies for use on another device/browser,
-and importing cookies to resume a session without re-login.
+Allows exporting the ikariam session cookie for use in another bot instance
+or in a browser, and importing a cookie to resume a session without re-login.
+
+Only the ``ikariam`` cookie is exchanged.  Each client maintains its own
+PHPSESSID so that CSRF tokens (actionRequest) don't conflict between the
+bot and the browser.
 """
 
 import json
 
-from autoIkabot.ui.prompts import banner, enter, read, read_input
+from autoIkabot.ui.prompts import banner, enter, read
 from autoIkabot.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -16,12 +20,11 @@ MODULE_SECTION = "Settings"
 MODULE_NUMBER = 1
 MODULE_DESCRIPTION = "Import/Export session cookies"
 
-_SECURITY_WARNING = """
-  WARNING: Cookie strings give FULL ACCESS to your Ikariam account.
-  Anyone who has this string can log in as you. Do NOT share it
-  with anyone you don't trust. It is YOUR responsibility to keep
-  this string safe.
-"""
+# ANSI colour helpers
+_WARNING = "\033[93m"
+_GREEN = "\033[92m"
+_RED = "\033[91m"
+_ENDC = "\033[0m"
 
 
 def importExportCookie(session) -> None:
@@ -33,92 +36,75 @@ def importExportCookie(session) -> None:
         The game session.
     """
     banner()
-    print("  Cookie Manager")
-    print("  ==============")
-    print("  1) Export cookies (JSON)")
-    print("  2) Export cookies (JavaScript for browser console)")
-    print("  3) Import cookies")
-    print("  0) Back")
-    print()
-
-    choice = read(min=0, max=3, digit=True)
-
-    if choice == 0:
-        return
+    print("Do you want to import or export the cookie?")
+    print("(0) Exit")
+    print("(1) Import")
+    print("(2) Export")
+    choice = read(min=0, max=2)
 
     if choice == 1:
-        _export_json(session)
+        _import_cookie(session)
     elif choice == 2:
-        _export_js(session)
-    elif choice == 3:
-        _import_cookies(session)
+        _export_cookie(session)
 
 
-def _export_json(session) -> None:
-    """Export cookies as JSON string."""
+def _import_cookie(session) -> None:
+    """Import an ikariam cookie from user input."""
     banner()
-    print(_SECURITY_WARNING)
-    # Refresh session to ensure cookies are valid
+    print(
+        "{}⚠️ INSERTING AN INVALID COOKIE WILL LOG YOU OUT OF YOUR "
+        "OTHER SESSIONS ⚠️{}\n\n".format(_WARNING, _ENDC)
+    )
+    print("Go ahead and export the cookie from another ikabot instance now and then")
+    print('type your "ikariam" cookie below:')
+    newcookie = read()
+    if not newcookie:
+        return
+
+    success = session.import_cookies(newcookie)
+    if success:
+        print(
+            "{}Success!{} This session will now use the cookie you provided".format(
+                _GREEN, _ENDC
+            )
+        )
+        logger.info("ikariam cookie imported successfully")
+    else:
+        print(
+            "{}Failure!{} All your other sessions have just been invalidated!".format(
+                _RED, _ENDC
+            )
+        )
+        logger.warning("ikariam cookie import failed")
+    enter()
     session.get()
+
+
+def _export_cookie(session) -> None:
+    """Export the ikariam cookie for bot-to-bot sync and browser console."""
+    banner()
+    session.get()  # refresh cookie in case user logged the bot out
     cookies_json = session.export_cookies()
     cookie_dict = json.loads(cookies_json)
-    if not cookie_dict:
-        print("  No session cookies found.")
-        enter()
-        return
-    print("Use this cookie to synchronise two ikabot instances on 2 different machines\n")
-    print(cookies_json + "\n")
-    logger.info("Cookies exported as JSON")
-    enter()
-
-
-def _export_js(session) -> None:
-    """Export cookies as JavaScript snippet."""
-    banner()
-    print(_SECURITY_WARNING)
-    # Refresh session to ensure cookie is valid
-    session.get()
-    cookie_js = session.export_cookies_js()
-    if cookie_js.startswith("//"):
+    ikariam = cookie_dict.get("ikariam")
+    if not ikariam:
         print("  No ikariam session cookie found.")
         enter()
         return
+
+    print(
+        "Use this cookie to synchronise two ikabot instances on 2 different machines\n\n"
+    )
+    print("ikariam=" + ikariam + "\n\n")
+
+    cookie_js = session.export_cookies_js()
     print(
         """To prevent ikabot from logging you out while playing Ikariam do the following:
-1. Navigate to your game server (e.g. s59-en.ikariam.gameforge.com)
-2. Open Chrome javascript console by pressing CTRL + SHIFT + J
-3. Copy the text below, paste it into the console and press enter
-4. Press F5
-"""
+    1. Be on the "Your session has expired" screen
+    2. Open Chrome javascript console by pressing CTRL + SHIFT + J
+    3. Copy the text below, paste it into the console and press enter
+    4. Press F5
+    """
     )
     print(cookie_js)
-    logger.info("Cookies exported as JavaScript")
-    enter()
-
-
-def _import_cookies(session) -> None:
-    """Import cookies from user input."""
-    banner()
-    print("  Paste your cookie string (JSON or raw ikariam cookie value):")
-    print("  (press Enter when done)")
-    print()
-
-    cookie_input = read_input("Cookie: ")
-    if not cookie_input:
-        print("  No input provided.")
-        enter()
-        return
-
-    print("\n  Validating cookies...")
-    success = session.import_cookies(cookie_input)
-
-    if success:
-        print("  Cookies imported successfully! Session is active.")
-        logger.info("Cookies imported successfully")
-    else:
-        print("  Cookie import failed — cookies are invalid or expired.")
-        print("  Note: importing invalid cookies may have invalidated")
-        print("  other active sessions.")
-        logger.warning("Cookie import failed")
-
     enter()
