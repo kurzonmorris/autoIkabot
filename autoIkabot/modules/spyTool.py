@@ -2606,9 +2606,52 @@ def extract_ajax_change_view_html(response):
     return ""
 
 
-def parse_hideout_spy_stats(html_content):
+def extract_ajax_full_data(response):
+    """Extract all useful data from an ajax=1 response.
+
+    Returns
+    -------
+    dict with keys:
+        html : str — the changeView HTML content
+        background_data : dict — the updateBackgroundData object (city-level data)
+        template_data : str — the updateTemplateData content
+        raw_items : list — all response items for debug inspection
     """
-    Parse hideout page HTML and return spy/capacity data.
+    result = {
+        "html": "",
+        "background_data": {},
+        "template_data": "",
+        "raw_items": [],
+    }
+    try:
+        data = json.loads(response, strict=False)
+        result["raw_items"] = data
+        for item in data:
+            if not isinstance(item, list) or len(item) < 2:
+                continue
+            if item[0] == "changeView":
+                if isinstance(item[1], list) and len(item[1]) >= 2:
+                    result["html"] = item[1][1]
+            elif item[0] == "updateBackgroundData":
+                if isinstance(item[1], dict):
+                    result["background_data"] = item[1]
+            elif item[0] == "updateTemplateData":
+                result["template_data"] = str(item[1]) if item[1] else ""
+    except Exception as e:
+        debug_log_error("Failed to parse ajax response", e)
+    return result
+
+
+def parse_hideout_spy_stats(html_content, background_data=None):
+    """
+    Parse hideout page HTML and background data to extract spy/capacity info.
+
+    Parameters
+    ----------
+    html_content : str
+        The changeView HTML from the safehouse AJAX response.
+    background_data : dict, optional
+        The updateBackgroundData dict from the same AJAX response.
 
     Returns
     -------
@@ -2623,52 +2666,105 @@ def parse_hideout_spy_stats(html_content):
         "free_slots": 0,
     }
 
-    if not html_content:
-        return stats
+    if background_data is None:
+        background_data = {}
 
-    compact = re.sub(r"\s+", " ", html_content)
+    # --- Strategy 1: Look for numbers inside the changeView HTML ---
+    if html_content:
+        compact = re.sub(r"\s+", " ", html_content)
+        debug_log(f"[parse_hideout_spy_stats] HTML length: {len(compact)}")
+        debug_log(f"[parse_hideout_spy_stats] HTML snippet: {compact[:2000]}")
 
-    key_patterns = {
-        "registered_spies": [
-            r"(?:registered|total)\s*sp(?:y|ies)[^0-9]{0,30}(\d+)",
-            r"spiesRegistered\s*[:=]\s*(\d+)",
-            r"agentsRegistered\s*[:=]\s*(\d+)",
-        ],
-        "spies_in_city": [
-            r"(?:in\s*city|stationed|at\s*home)\s*sp(?:y|ies)[^0-9]{0,30}(\d+)",
-            r"spiesInCity\s*[:=]\s*(\d+)",
-            r"agentsAtHome\s*[:=]\s*(\d+)",
-        ],
-        "max_capacity": [
-            r"(?:max(?:imum)?\s*)?(?:sp(?:y|ies)|agents)\s*(?:capacity|limit)[^0-9]{0,30}(\d+)",
-            r"maxSpies\s*[:=]\s*(\d+)",
-            r"agentsLimit\s*[:=]\s*(\d+)",
-        ],
-    }
+        # Look for JavaScript variables embedded in the HTML (Ikariam style: 'key': value)
+        js_var_patterns = {
+            "registered_spies": [
+                r"['\"]?(?:spies|agents|spy)(?:Registered|Count|Total|_count|_total)['\"]?\s*[:=]\s*['\"]?(\d+)",
+                r"['\"]?(?:registered|total)(?:Spies|Agents|_spies|_agents)['\"]?\s*[:=]\s*['\"]?(\d+)",
+                r"['\"]?(?:currentCount|count)['\"]?\s*[:=]\s*['\"]?(\d+)",
+            ],
+            "spies_in_city": [
+                r"['\"]?(?:spies|agents)(?:InCity|AtHome|InTown|_in_city|_at_home)['\"]?\s*[:=]\s*['\"]?(\d+)",
+                r"['\"]?(?:inCity|atHome|stationed)(?:Spies|Agents|_spies|_agents|Count)?['\"]?\s*[:=]\s*['\"]?(\d+)",
+            ],
+            "max_capacity": [
+                r"['\"]?(?:max|maximum)(?:Spies|Agents|SpyCount|AgentCount|Capacity|_spies|_capacity)['\"]?\s*[:=]\s*['\"]?(\d+)",
+                r"['\"]?(?:spies|agents|spy)(?:Limit|Max|Capacity|_limit|_max)['\"]?\s*[:=]\s*['\"]?(\d+)",
+                r"['\"]?(?:capacity|limit)['\"]?\s*[:=]\s*['\"]?(\d+)",
+            ],
+        }
 
-    for key, patterns in key_patterns.items():
-        for pattern in patterns:
-            match = re.search(pattern, compact, re.IGNORECASE)
-            if match:
-                stats[key] = int(match.group(1))
-                break
+        for key, patterns in js_var_patterns.items():
+            for pattern in patterns:
+                match = re.search(pattern, compact, re.IGNORECASE)
+                if match:
+                    stats[key] = int(match.group(1))
+                    debug_log(f"[parse_hideout_spy_stats] Matched {key}={match.group(1)} via pattern: {pattern}")
+                    break
 
-    if stats["registered_spies"] == 0 or stats["max_capacity"] == 0:
-        ratio_match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:sp(?:y|ies)|agents)", compact, re.IGNORECASE)
-        if ratio_match:
-            left = int(ratio_match.group(1))
-            right = int(ratio_match.group(2))
-            if stats["registered_spies"] == 0:
-                stats["registered_spies"] = left
-            if stats["max_capacity"] == 0 and right >= left:
-                stats["max_capacity"] = right
+        # Look for N/M ratio patterns (e.g. "3/5" near spy-related text or CSS classes)
+        if stats["registered_spies"] == 0 or stats["max_capacity"] == 0:
+            # Try ratio near spy-related context
+            ratio_patterns = [
+                r"spycount[^>]*>.*?(\d+)\s*/\s*(\d+)",
+                r"spy[^>]*>.*?(\d+)\s*/\s*(\d+)",
+                r"agent[^>]*>.*?(\d+)\s*/\s*(\d+)",
+                r"(\d+)\s*/\s*(\d+)\s*(?:sp(?:y|ies)|agents)",
+                r"class=\"[^\"]*(?:spy|agent|count)[^\"]*\"[^>]*>[^<]*?(\d+)\s*/\s*(\d+)",
+            ]
+            for pattern in ratio_patterns:
+                ratio_match = re.search(pattern, compact, re.IGNORECASE)
+                if ratio_match:
+                    left = int(ratio_match.group(1))
+                    right = int(ratio_match.group(2))
+                    if stats["registered_spies"] == 0:
+                        stats["registered_spies"] = left
+                    if stats["max_capacity"] == 0 and right >= left:
+                        stats["max_capacity"] = right
+                    debug_log(f"[parse_hideout_spy_stats] Ratio match: {left}/{right} via: {pattern}")
+                    break
 
+        # Look for any standalone numbers in value-like elements (id containing spy/agent/count)
+        if stats["registered_spies"] == 0:
+            value_patterns = [
+                r'id="[^"]*(?:spy|agent|count)[^"]*"[^>]*>\s*(\d+)\s*<',
+                r'class="[^"]*(?:spy|agent|count|value)[^"]*"[^>]*>\s*(\d+)\s*<',
+            ]
+            for pattern in value_patterns:
+                matches = re.findall(pattern, compact, re.IGNORECASE)
+                if matches:
+                    debug_log(f"[parse_hideout_spy_stats] Value element matches: {matches} via: {pattern}")
+
+    # --- Strategy 2: Extract from updateBackgroundData ---
+    if background_data:
+        debug_log(f"[parse_hideout_spy_stats] Background data keys: {list(background_data.keys())}")
+
+        # Log any key containing 'spy', 'agent', 'espionage', 'safe' for discovery
+        for key, value in background_data.items():
+            key_lower = key.lower()
+            if any(term in key_lower for term in ["spy", "agent", "espionage", "safe", "hideout"]):
+                debug_log(f"[parse_hideout_spy_stats] Relevant background field: {key}={value}")
+
+        # spiesInside is a known field (null in city view, possibly populated in safehouse view)
+        spies_inside = background_data.get("spiesInside")
+        if spies_inside is not None and stats["spies_in_city"] == 0:
+            if isinstance(spies_inside, (int, float)):
+                stats["spies_in_city"] = int(spies_inside)
+                debug_log(f"[parse_hideout_spy_stats] spiesInside from background: {spies_inside}")
+            elif isinstance(spies_inside, str):
+                # May be a text string; try to extract a number
+                num_match = re.search(r"(\d+)", spies_inside)
+                if num_match:
+                    stats["spies_in_city"] = int(num_match.group(1))
+                    debug_log(f"[parse_hideout_spy_stats] spiesInside string parsed: {num_match.group(1)}")
+
+    # --- Derived values ---
     if stats["spies_in_city"] == 0 and stats["registered_spies"] > 0:
         stats["spies_in_city"] = stats["registered_spies"]
 
     stats["spies_out"] = max(0, stats["registered_spies"] - stats["spies_in_city"])
     stats["free_slots"] = max(0, stats["max_capacity"] - stats["registered_spies"])
 
+    debug_log(f"[parse_hideout_spy_stats] Final stats: {stats}")
     return stats
 
 
@@ -2707,8 +2803,8 @@ def get_city_hideout_data(session, city_id):
     city_data["hideout_level"] = int(hideout_building.get("level", 0) or 0)
     city_data["hideout_position"] = hideout_building.get("position")
 
-    view_candidates = ["safeHouse", "safehouse", "espionage" ]
-    hideout_html = ""
+    view_candidates = ["safehouse", "safeHouse", "espionage"]
+    ajax_data = {"html": "", "background_data": {}}
     for view in view_candidates:
         try:
             params = (
@@ -2716,13 +2812,18 @@ def get_city_hideout_data(session, city_id):
                 f"&backgroundView=city&currentCityId={city_id}&ajax=1"
             )
             response = session.post(params)
-            hideout_html = extract_ajax_change_view_html(response)
-            if hideout_html:
+            ajax_data = extract_ajax_full_data(response)
+            debug_log(
+                f"[get_city_hideout_data] view={view} city={city_id} "
+                f"html_len={len(ajax_data['html'])} "
+                f"bg_keys={list(ajax_data['background_data'].keys()) if ajax_data['background_data'] else 'none'}"
+            )
+            if ajax_data["html"]:
                 break
         except Exception as e:
             debug_log_error(f"Error fetching hideout view {view} for city {city_id}", e)
 
-    stats = parse_hideout_spy_stats(hideout_html)
+    stats = parse_hideout_spy_stats(ajax_data["html"], ajax_data["background_data"])
     city_data.update(stats)
 
     return city_data
