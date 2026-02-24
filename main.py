@@ -129,6 +129,20 @@ def main() -> None:
             func=importExportCookie,
         )
 
+        # Notification Setup module (Settings)
+        from autoIkabot.modules.notificationSetup import (
+            notificationSetup,
+            MODULE_NAME as NOTIF_NAME,
+            MODULE_SECTION as NOTIF_SECTION,
+            MODULE_NUMBER as NOTIF_NUMBER,
+            MODULE_DESCRIPTION as NOTIF_DESC,
+        )
+        register_module(
+            name=NOTIF_NAME, section=NOTIF_SECTION,
+            number=NOTIF_NUMBER, description=NOTIF_DESC,
+            func=notificationSetup,
+        )
+
         # Task Status module (Settings)
         from autoIkabot.modules.taskStatus import (
             taskStatus,
