@@ -129,6 +129,34 @@ def main() -> None:
             func=importExportCookie,
         )
 
+        # Notification Setup module (Settings)
+        from autoIkabot.modules.notificationSetup import (
+            notificationSetup,
+            MODULE_NAME as NOTIF_NAME,
+            MODULE_SECTION as NOTIF_SECTION,
+            MODULE_NUMBER as NOTIF_NUMBER,
+            MODULE_DESCRIPTION as NOTIF_DESC,
+        )
+        register_module(
+            name=NOTIF_NAME, section=NOTIF_SECTION,
+            number=NOTIF_NUMBER, description=NOTIF_DESC,
+            func=notificationSetup,
+        )
+
+        # Task Status module (Settings)
+        from autoIkabot.modules.taskStatus import (
+            taskStatus,
+            MODULE_NAME as TASKSTATUS_NAME,
+            MODULE_SECTION as TASKSTATUS_SECTION,
+            MODULE_NUMBER as TASKSTATUS_NUMBER,
+            MODULE_DESCRIPTION as TASKSTATUS_DESC,
+        )
+        register_module(
+            name=TASKSTATUS_NAME, section=TASKSTATUS_SECTION,
+            number=TASKSTATUS_NUMBER, description=TASKSTATUS_DESC,
+            func=taskStatus,
+        )
+
         # Kill Tasks module (Settings)
         from autoIkabot.modules.killTasks import (
             killTasks,
@@ -199,6 +227,35 @@ def main() -> None:
             name=AUTOLOAD_NAME, section=AUTOLOAD_SECTION,
             number=AUTOLOAD_NUMBER, description=AUTOLOAD_DESC,
             func=autoLoader,
+        )
+
+        # Construction Manager — background
+        from autoIkabot.modules.constructionManager import (
+            constructionManager,
+            MODULE_NAME as CONSTRUCTION_NAME,
+            MODULE_SECTION as CONSTRUCTION_SECTION,
+            MODULE_NUMBER as CONSTRUCTION_NUMBER,
+            MODULE_DESCRIPTION as CONSTRUCTION_DESC,
+        )
+        register_module(
+            name=CONSTRUCTION_NAME, section=CONSTRUCTION_SECTION,
+            number=CONSTRUCTION_NUMBER, description=CONSTRUCTION_DESC,
+            func=constructionManager,
+            background=True,
+        )
+
+        # Spy/Monitoring modules
+        from autoIkabot.modules.spyTool import (
+            spyTool,
+            MODULE_NAME as SPY_NAME,
+            MODULE_SECTION as SPY_SECTION,
+            MODULE_NUMBER as SPY_NUMBER,
+            MODULE_DESCRIPTION as SPY_DESC,
+        )
+        register_module(
+            name=SPY_NAME, section=SPY_SECTION,
+            number=SPY_NUMBER, description=SPY_DESC,
+            func=spyTool,
         )
 
         # Auto-launch saved module configs before entering the menu

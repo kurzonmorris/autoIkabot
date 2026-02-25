@@ -10,7 +10,7 @@ import pathlib
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
-VERSION = "0.7.1"
+VERSION = "0.8.2"
 
 # ---------------------------------------------------------------------------
 # Filesystem paths (all pathlib.Path, cross-platform)
@@ -129,6 +129,36 @@ ISLAND_URL = "view=island&islandId="
 # Rate limiting — minimum seconds between game requests (Phase 5.1)
 # Too fast triggers Ikariam's anti-bot detection / IP ban
 RATE_LIMIT_MIN_DELAY = 0.3         # seconds between requests (300ms)
+
+# Technical resource names (lowercase, used in game HTML/JS — "glass" = Crystal)
+MATERIALS_NAMES_TEC = ["wood", "wine", "marble", "glass", "sulfur"]
+
+# MD5 hashes of CDN resource icon images — used by construction module to
+# identify which resource column corresponds to which material type.
+MATERIAL_IMG_HASH = [
+    "19c3527b2f694fb882563c04df6d8972",  # wood
+    "c694ddfda045a8f5ced3397d791fd064",  # wine
+    "bffc258b990c1a2a36c5aeb9872fc08a",  # marble
+    "1e417b4059940b2ae2680c070a197d8c",  # crystal (glass)
+    "9b5578a7dfa3e98124439cca4a387a61",  # sulfur
+]
+
+# Buildings that reduce upgrade costs (name -> resource index)
+COST_REDUCER_BUILDINGS = {
+    "carpentering": 0,  # reduces Wood cost
+    "vineyard": 1,      # reduces Wine cost
+    "architect": 2,     # reduces Marble cost
+    "optician": 3,      # reduces Crystal cost
+    "fireworker": 4,    # reduces Sulfur cost
+}
+
+# Economy research IDs that reduce building costs
+COST_REDUCTION_RESEARCH = {
+    "2020": 2,   # +2% cost reduction
+    "2060": 4,   # +4% cost reduction
+    "2100": 8,   # +8% cost reduction
+}
+COST_REDUCTION_MAX = 14  # sum of all research reductions
 
 # Key cookie names for import/export (Phase 5.3)
 SESSION_COOKIE_NAMES = [

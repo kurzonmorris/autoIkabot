@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from autoIkabot.config import VERSION
 from autoIkabot.ui.prompts import banner, clear_screen, enter, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import read_critical_errors, update_process_list
+from autoIkabot.utils.process import get_process_health, is_process_frozen, read_critical_errors, update_process_list
 
 logger = get_logger(__name__)
 
@@ -119,18 +119,22 @@ def _render_menu(session) -> Dict[int, Dict]:
     process_list = update_process_list(session)
     if process_list:
         print("  Background Tasks:")
-        print(f"  {'PID':>7} | {'Task':<25} | {'Started':<15} | Status")
-        print(f"  {'-' * 7}-+-{'-' * 25}-+-{'-' * 15}-+-{'-' * 30}")
+        print(f"  {'PID':>7} | {'Task':<25} | {'Started':<15} | {'Health':<8} | Status")
+        print(f"  {'-' * 7}-+-{'-' * 25}-+-{'-' * 15}-+-{'-' * 8}-+-{'-' * 30}")
         for proc in process_list:
             date_str = ""
             if proc.get("date"):
                 date_str = datetime.datetime.fromtimestamp(
                     proc["date"]
                 ).strftime("%b %d %H:%M")
+            health = get_process_health(proc)
             status = proc.get("status", "running")
             if len(status) > 30:
                 status = status[:27] + "..."
-            print(f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15} | {status}")
+            print(
+                f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15}"
+                f" | {health:<8} | {status}"
+            )
         print()
 
     modules = get_registered_modules()

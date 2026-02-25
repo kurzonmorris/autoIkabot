@@ -123,7 +123,7 @@ def getMinimumWaitingTime(session) -> int:
     return 0
 
 
-def waitForArrival(session, useFreighters: bool = False) -> int:
+def waitForArrival(session, useFreighters: bool = False, max_wait: int = 7200) -> int:
     """Wait until at least one ship is available, then return the count.
 
     Parameters
@@ -132,15 +132,21 @@ def waitForArrival(session, useFreighters: bool = False) -> int:
         The game session.
     useFreighters : bool
         If True, wait for freighters; otherwise trade ships.
+    max_wait : int
+        Maximum seconds to wait before returning 0 (default 2 hours).
 
     Returns
     -------
     int
-        Number of available ships once at least one arrives.
+        Number of available ships once at least one arrives, or 0 on timeout.
     """
     getter = getAvailableFreighters if useFreighters else getAvailableShips
     available = getter(session)
+    start = time.time()
     while available == 0:
+        if time.time() - start > max_wait:
+            logger.warning("waitForArrival timed out after %ds", max_wait)
+            return 0
         wait_time = getMinimumWaitingTime(session)
         if wait_time <= 0:
             wait_time = 60

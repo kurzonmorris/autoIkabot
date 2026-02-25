@@ -578,11 +578,16 @@ def _phase_7_extract_token(
     elif is_interactive:
         print("\n  Failed to obtain login token automatically.")
         print("  Status:", auth_response.status_code)
-        print("  Please log in via browser and extract the cookie:")
-        print("    1. Open browser console (F12 > Console)")
-        print("    2. Paste: document.cookie.split(';').forEach(x => "
-              "{if (x.includes('production')) console.log(x)})")
-        print("    3. Copy the UUID value after 'gf-token-production='")
+        print("  You can extract it from your browser:")
+        print("    1. In the browser where you are logged into Ikariam,")
+        print("       open dev tools (F12) and click the Console tab")
+        print("    2. Paste this command:")
+        print("       document.cookie.split(';').forEach(x => {")
+        print("         if (x.includes('production')) console.log(x) })")
+        print("    3. If the console says pasting needs to be allowed,")
+        print("       type: allow pasting")
+        print("       Press Enter, then try pasting the command again")
+        print("    4. Copy the token that starts with gf-token-production=")
 
         auth_token = read_input("\n  Enter gf-token-production: ").strip()
         # Strip cookie name prefix if pasted
