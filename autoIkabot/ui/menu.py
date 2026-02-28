@@ -17,7 +17,7 @@ import time
 from typing import Any, Dict, List
 
 from autoIkabot.config import VERSION
-from autoIkabot.ui.prompts import banner, enter, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import get_process_health, read_critical_errors, report_critical_error, update_process_list
 
@@ -208,7 +208,11 @@ def run_menu(session) -> None:
         all_numbers = list(action_map.keys()) + [0]
         max_num = max(all_numbers) if all_numbers else 0
 
-        selected = read(min=0, max=max_num, digit=True, msg="Enter number: ")
+        try:
+            selected = read(min=0, max=max_num, digit=True, msg="Enter number: ")
+        except ReturnToMainMenu:
+            # Already at top-level menu; ignore and re-render.
+            continue
 
         if selected == 0:
             return
@@ -231,6 +235,8 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
     """Run a module synchronously (blocks the menu)."""
     try:
         mod["func"](session)
+    except ReturnToMainMenu:
+        logger.info("Module %s requested return to menu", mod["name"])
     except KeyboardInterrupt:
         print("\n  Module interrupted.")
     except Exception as e:
@@ -249,6 +255,7 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     """
     from autoIkabot.utils.logging import setup_account_logger
     from autoIkabot.web.session import Session
+    from autoIkabot.ui.prompts import ReturnToMainMenu
 
     # Set up file-based logging before anything else — without this,
     # Python's last-resort handler prints WARNING+ to stderr, clobbering
@@ -266,6 +273,8 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     session = Session.from_dict(session_data)
     try:
         func(session, event, stdin_fd)
+    except ReturnToMainMenu:
+        logger.info("Background module config escaped to menu")
     except Exception:
         # Safety net: if a background module crashes without reporting
         # the error itself, report it here so the parent menu shows it.

@@ -17,6 +17,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from autoIkabot.config import CITY_URL, IS_WINDOWS, MATERIALS_NAMES, VERSION
 
 
+class ReturnToMainMenu(Exception):
+    """Raised when user enters the global escape token to return to menu."""
+
+
 def read_input(prompt_text: str = ">> ") -> str:
     """Read a line of input from the user.
 
@@ -31,7 +35,10 @@ def read_input(prompt_text: str = ">> ") -> str:
         The user's input, stripped of leading/trailing whitespace.
     """
     try:
-        return input(prompt_text).strip()
+        value = input(prompt_text).strip()
+        if value == "\\":
+            raise ReturnToMainMenu()
+        return value
     except EOFError:
         return ""
 
@@ -258,6 +265,10 @@ def read(
             raw = input(msg)
         except EOFError:
             raw = ""
+
+        # Global escape token to return to main menu from any prompt.
+        if raw == "\\":
+            raise ReturnToMainMenu()
 
         # Check additional values first (e.g. "'" for exit)
         if additionalValues is not None and raw in additionalValues:
