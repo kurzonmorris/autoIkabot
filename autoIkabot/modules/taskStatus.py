@@ -143,6 +143,7 @@ def taskStatus(session) -> None:
         now = time.time()
         healthy_count = 0
         frozen_indices = []
+        broken_indices = []
         paused_count = 0
 
         print("  Task Status")
@@ -167,8 +168,7 @@ def taskStatus(session) -> None:
                     paused_count += 1
                 healthy_count += 1
             elif health == "BROKEN":
-                # Broken is alive but unhealthy; keep visible in summary.
-                pass
+                broken_indices.append(i)
             else:
                 healthy_count += 1
 
@@ -198,7 +198,7 @@ def taskStatus(session) -> None:
             summary += f" {len(frozen_indices)} frozen."
         print(summary)
 
-        if not frozen_indices and paused_count == 0:
+        if not frozen_indices and not broken_indices and paused_count == 0:
             print()
             print("  All tasks running normally.")
             enter()
@@ -216,6 +216,14 @@ def taskStatus(session) -> None:
             actions.append(("check_paused", None, None, None))
             print(f"  ({action_idx}) Check paused tasks now (trigger immediate resource check)")
             has_check_now = True
+
+        # Broken task actions (always kill/restart manually)
+        for bi in broken_indices:
+            proc = process_list[bi]
+            action_idx += 1
+            actions.append(("broken_kill", bi, proc, None))
+            action_name = proc.get("action", "?")
+            print(f"  ({action_idx}) Kill broken: {action_name} (restart manually from menu)")
 
         # Frozen task actions
         for fi in frozen_indices:
@@ -236,6 +244,15 @@ def taskStatus(session) -> None:
 
         choice = read(min=0, max=len(actions), digit=True)
         if choice == 0:
+            # On exit, automatically kill broken modules so user can restart cleanly.
+            for bi in broken_indices:
+                proc = process_list[bi]
+                try:
+                    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                    os.kill(proc["pid"], sig)
+                    logger.info("Auto-killed broken process %d (%s)", proc["pid"], proc.get("action", "?"))
+                except (ProcessLookupError, PermissionError):
+                    pass
             return
 
         action_entry = actions[choice - 1]
@@ -243,6 +260,26 @@ def taskStatus(session) -> None:
         if action_entry[0] == "check_paused":
             # Write trigger file to wake up paused construction tasks
             _trigger_construction_check(session)
+            enter()
+            continue
+
+        if action_entry[0] == "broken_kill":
+            _, _, proc, _ = action_entry
+            action_name = proc.get("action", "?")
+            pid = proc["pid"]
+            print(f"\n  Kill broken '{action_name}' (PID {pid})? [Y/n]")
+            confirm = read(values=["y", "Y", "n", "N", ""])
+            if confirm.lower() == "n":
+                continue
+            try:
+                sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                os.kill(pid, sig)
+                logger.info("Killed broken process %d (%s)", pid, action_name)
+                print(f"  Killed: {action_name} (PID {pid})")
+            except ProcessLookupError:
+                print(f"  Process {pid} already dead.")
+            except PermissionError:
+                print(f"  Permission denied killing PID {pid}.")
             enter()
             continue
 
