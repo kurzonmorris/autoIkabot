@@ -212,6 +212,7 @@ def run_menu(session) -> None:
             selected = read(min=0, max=max_num, digit=True, msg="Enter number: ")
         except ReturnToMainMenu:
             # Already at top-level menu; ignore and re-render.
+            print("\n  Returning to main menu...")
             continue
 
         if selected == 0:
@@ -237,6 +238,7 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
         mod["func"](session)
     except ReturnToMainMenu:
         logger.info("Module %s requested return to menu", mod["name"])
+        print("\n  Returning to main menu...")
     except KeyboardInterrupt:
         print("\n  Module interrupted.")
     except Exception as e:

@@ -21,6 +21,9 @@ class ReturnToMainMenu(Exception):
     """Raised when user enters the global escape token to return to menu."""
 
 
+_PASSWORD_PROGRESS_SYMBOLS = ("*", "•", "◦", "·")
+
+
 def read_input(prompt_text: str = ">> ") -> str:
     """Read a line of input from the user.
 
@@ -56,10 +59,100 @@ def read_password(prompt_text: str = "Password: ") -> str:
     str
         The password string.
     """
+    if not has_tty():
+        try:
+            value = getpass.getpass(prompt_text)
+        except EOFError:
+            value = ""
+        if value == "\\":
+            raise ReturnToMainMenu()
+        return value
+
+    if IS_WINDOWS:
+        return _read_password_windows(prompt_text)
+    return _read_password_unix(prompt_text)
+
+
+def _read_password_windows(prompt_text: str) -> str:
+    """Read password on Windows with a single rotating progress symbol."""
+    import msvcrt
+
+    chars: List[str] = []
+    symbol_idx = 0
+
+    def _render() -> None:
+        symbol = _PASSWORD_PROGRESS_SYMBOLS[symbol_idx] if chars else " "
+        sys.stdout.write(f"\r{prompt_text}{symbol}")
+        sys.stdout.flush()
+
+    _render()
+    while True:
+        ch = msvcrt.getwch()
+        if ch in ("\r", "\n"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            break
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch in ("\x08", "\x7f"):
+            if chars:
+                chars.pop()
+            _render()
+            continue
+        if ch in ("\x00", "\xe0"):
+            msvcrt.getwch()  # consume special-key second byte
+            continue
+        chars.append(ch)
+        symbol_idx = (symbol_idx + 1) % len(_PASSWORD_PROGRESS_SYMBOLS)
+        _render()
+
+    password = "".join(chars)
+    if password == "\\":
+        raise ReturnToMainMenu()
+    return password
+
+
+def _read_password_unix(prompt_text: str) -> str:
+    """Read password on Unix with a single rotating progress symbol."""
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    chars: List[str] = []
+    symbol_idx = 0
+
+    def _render() -> None:
+        symbol = _PASSWORD_PROGRESS_SYMBOLS[symbol_idx] if chars else " "
+        sys.stdout.write(f"\r{prompt_text}{symbol}")
+        sys.stdout.flush()
+
     try:
-        return getpass.getpass(prompt_text)
-    except EOFError:
-        return ""
+        tty.setraw(fd)
+        _render()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\x7f", "\b"):
+                if chars:
+                    chars.pop()
+                _render()
+                continue
+            chars.append(ch)
+            symbol_idx = (symbol_idx + 1) % len(_PASSWORD_PROGRESS_SYMBOLS)
+            _render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    password = "".join(chars)
+    if password == "\\":
+        raise ReturnToMainMenu()
+    return password
 
 
 def read_choice(
