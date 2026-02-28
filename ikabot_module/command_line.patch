@@ -1,0 +1,36 @@
+Patch instructions for ikabot/command_line.py
+=============================================
+
+This file documents the minimal changes needed to add the Notification Setup
+menu item to ikabot's command_line.py.
+
+Only 3 changes are required:
+
+--- CHANGE 1: Add import (near the other function imports at the top) ---
+
+Add this line alongside the other "from ikabot.function..." imports:
+
+    from ikabot.function.notificationSetup import notificationSetup
+
+--- CHANGE 2: Add to menu_actions dict ---
+
+Find the menu_actions dictionary and add this entry.
+The 2109 prefix means: submenu 21 (Settings/Options), option 9.
+
+    2109: notificationSetup,
+
+--- CHANGE 3: Add menu option in the Settings submenu ---
+
+Find the Settings/Options submenu section (where selected == 21).
+It currently shows options like:
+
+    print("(8) Load custom ikabot module")
+    selected = read(min=0, max=8, digit=True)
+
+Change to:
+
+    print("(8) Load custom ikabot module")
+    print("(9) Notification setup")
+    selected = read(min=0, max=9, digit=True)
+
+That's it! All existing functionality remains unchanged.
