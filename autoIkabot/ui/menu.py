@@ -259,9 +259,6 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     )
 
     # Enable input recording in the child process (for autoLoader).
-    # This must happen here rather than in the parent because on
-    # Windows/spawn the child starts fresh and doesn't inherit
-    # the parent's module-level state.
     if recording:
         from autoIkabot.ui.prompts import start_recording_inputs
         start_recording_inputs()
@@ -273,13 +270,19 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
         # Safety net: if a background module crashes without reporting
         # the error itself, report it here so the parent menu shows it.
         import traceback
-        from autoIkabot.utils.process import report_critical_error
         logger.exception("Background module crashed")
+        short = traceback.format_exc().splitlines()[-1]
         report_critical_error(
             session,
             func.__module__ or "Unknown",
-            f"Module crashed and stopped.\n{traceback.format_exc().splitlines()[-1]}",
+            f"BG_MODULE_CRASH: {short}",
         )
+    finally:
+        # Always unblock the parent config wait.
+        try:
+            event.set()
+        except Exception:
+            pass
 
 
 def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) -> None:

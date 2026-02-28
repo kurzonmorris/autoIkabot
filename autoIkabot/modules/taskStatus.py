@@ -162,9 +162,13 @@ def taskStatus(session) -> None:
 
             if health == "FROZEN":
                 frozen_indices.append(i)
-            elif health == "PAUSED":
-                paused_count += 1
-                healthy_count += 1  # PAUSED is not unhealthy, just waiting
+            elif health in ("PAUSED", "WAITING", "PROCESSING", "OK"):
+                if health == "PAUSED":
+                    paused_count += 1
+                healthy_count += 1
+            elif health == "BROKEN":
+                # Broken is alive but unhealthy; keep visible in summary.
+                pass
             else:
                 healthy_count += 1
 
@@ -187,6 +191,9 @@ def taskStatus(session) -> None:
         summary = f"  {healthy_count} of {total} tasks healthy."
         if paused_count > 0:
             summary += f" {paused_count} paused."
+        broken_count = len([p for p in process_list if get_process_health(p) == "BROKEN"])
+        if broken_count > 0:
+            summary += f" {broken_count} broken."
         if frozen_indices:
             summary += f" {len(frozen_indices)} frozen."
         print(summary)

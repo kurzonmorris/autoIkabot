@@ -457,24 +457,28 @@ def is_process_frozen(entry: Dict[str, Any]) -> bool:
 
 
 def get_process_health(entry: Dict[str, Any]) -> str:
-    """Return the health status of a process entry.
+    """Return the health/state label for a process entry.
 
-    Checks the status string for a ``[PAUSED]`` prefix first, then
-    falls back to heartbeat-based frozen detection.
+    Prefix contract (case-insensitive):
+      - ``[BROKEN]`` -> ``"BROKEN"``
+      - ``[PAUSED]`` -> ``"PAUSED"``
+      - ``[WAITING]`` -> ``"WAITING"``
+      - ``[PROCESSING]`` -> ``"PROCESSING"``
 
-    Parameters
-    ----------
-    entry : dict
-        A process list entry.
-
-    Returns
-    -------
-    str
-        ``"PAUSED"``, ``"FROZEN"``, or ``"OK"``.
+    Fallback:
+      - stale heartbeat -> ``"FROZEN"``
+      - otherwise -> ``"OK"``
     """
-    status = entry.get("status", "")
-    if "[PAUSED]" in status:
+    status = str(entry.get("status", ""))
+    up = status.upper()
+    if "[BROKEN]" in up:
+        return "BROKEN"
+    if "[PAUSED]" in up:
         return "PAUSED"
+    if "[WAITING]" in up:
+        return "WAITING"
+    if "[PROCESSING]" in up:
+        return "PROCESSING"
     if is_process_frozen(entry):
         return "FROZEN"
     return "OK"
