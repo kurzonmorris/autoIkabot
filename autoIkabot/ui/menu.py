@@ -247,7 +247,7 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
         enter()
 
 
-def _child_entry(func, session_data, event, stdin_fd, recording=False):
+def _child_entry(func, session_data, event, stdin_fd, startup_state=None, recording=False):
     """Entry point for child processes.
 
     Reconstructs a Session from the plain dict produced by Session.to_dict(),
@@ -277,7 +277,17 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
         func(session, event, stdin_fd)
     except ReturnToMainMenu:
         logger.info("Background module config escaped to menu")
+        if startup_state is not None:
+            try:
+                startup_state.put_nowait("escaped")
+            except Exception:
+                pass
     except Exception:
+        if startup_state is not None:
+            try:
+                startup_state.put_nowait("crashed")
+            except Exception:
+                pass
         # Safety net: if a background module crashes without reporting
         # the error itself, report it here so the parent menu shows it.
         import traceback
@@ -317,10 +327,11 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         return
 
     session_data = session.to_dict()
+    startup_state = multiprocessing.Queue(maxsize=1)
 
     process = multiprocessing.Process(
         target=_child_entry,
-        args=(mod["func"], session_data, event, stdin_fd, recording),
+        args=(mod["func"], session_data, event, stdin_fd, startup_state, recording),
         name=mod["name"],
     )
     process.start()
@@ -346,6 +357,17 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
     config_timeout = 120
     start = time.time()
     while True:
+        child_state = None
+        try:
+            child_state = startup_state.get_nowait()
+        except Exception:
+            child_state = None
+
+        if child_state == "escaped":
+            print("\n  Returning to main menu...")
+            logger.info("Background module '%s' config escaped to menu", mod["name"])
+            break
+
         if event.wait(timeout=0.25):
             logger.info("Background module '%s' config complete, returning to menu", mod["name"])
             break
@@ -403,10 +425,11 @@ def dispatch_module_auto(
         return False
 
     session_data = session.to_dict()
+    startup_state = multiprocessing.Queue(maxsize=1)
 
     process = multiprocessing.Process(
         target=_child_entry,
-        args=(mod["func"], session_data, event, stdin_fd),
+        args=(mod["func"], session_data, event, stdin_fd, startup_state),
         name=f"AutoLoad-{mod['name']}",
     )
     process.start()
@@ -431,14 +454,36 @@ def dispatch_module_auto(
     )
 
     # Wait for config phase with timeout
-    if not event.wait(timeout=120):
-        logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
-        print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s.")
+    start = time.time()
+    while True:
+        child_state = None
         try:
-            process.terminate()
+            child_state = startup_state.get_nowait()
         except Exception:
-            pass
-        return False
+            child_state = None
+
+        if child_state == "escaped":
+            logger.info("Auto-load of '%s' escaped during config", mod["name"])
+            return False
+
+        if event.wait(timeout=0.25):
+            break
+
+        if not process.is_alive():
+            logger.warning(
+                "Auto-load of '%s' exited during config (exitcode=%s)",
+                mod["name"], process.exitcode,
+            )
+            return False
+
+        if (time.time() - start) > 120:
+            logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
+            print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s.")
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            return False
 
     logger.info("Auto-load of '%s' config complete", mod["name"])
     return True
