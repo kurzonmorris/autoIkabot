@@ -10,6 +10,7 @@ import time
 
 from autoIkabot.config import ACTION_REQUEST_PLACEHOLDER
 from autoIkabot.utils.logging import get_logger
+from autoIkabot.utils.process import sleep_with_heartbeat
 
 logger = get_logger(__name__)
 
@@ -126,31 +127,29 @@ def getMinimumWaitingTime(session) -> int:
 def waitForArrival(session, useFreighters: bool = False, max_wait: int = 7200) -> int:
     """Wait until at least one ship is available, then return the count.
 
-    Parameters
-    ----------
-    session : Session
-        The game session.
-    useFreighters : bool
-        If True, wait for freighters; otherwise trade ships.
-    max_wait : int
-        Maximum seconds to wait before returning 0 (default 2 hours).
-
-    Returns
-    -------
-    int
-        Number of available ships once at least one arrives, or 0 on timeout.
+    Uses heartbeat-aware sleep so monitoring does not classify long waits
+    as frozen while the module is legitimately idle.
     """
     getter = getAvailableFreighters if useFreighters else getAvailableShips
+    ship_name = "freighters" if useFreighters else "merchant ships"
     available = getter(session)
     start = time.time()
+
     while available == 0:
-        if time.time() - start > max_wait:
+        elapsed = time.time() - start
+        if elapsed > max_wait:
             logger.warning("waitForArrival timed out after %ds", max_wait)
+            session.setStatus(f"[BROKEN] Waited too long for {ship_name} ({int(elapsed)}s)")
             return 0
+
         wait_time = getMinimumWaitingTime(session)
         if wait_time <= 0:
             wait_time = 60
+
         logger.info("No ships available, waiting %ds", wait_time)
-        time.sleep(wait_time)
+        session.setStatus(f"[WAITING] No {ship_name} available, retrying in {wait_time}s")
+        sleep_with_heartbeat(session, wait_time, interval=30)
         available = getter(session)
+
+    session.setStatus(f"[PROCESSING] {available} {ship_name} available")
     return available
