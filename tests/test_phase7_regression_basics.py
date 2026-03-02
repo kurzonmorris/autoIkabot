@@ -51,3 +51,66 @@ def test_global_escape_token_read(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "\\")
     with pytest.raises(ReturnToMainMenu):
         read(msg="Prompt: ")
+
+
+def test_terminate_background_tasks_non_processing_force_killed(monkeypatch):
+    # PID 10 is non-processing and should be force-killed right away.
+    entries = [{"pid": 10, "status": "idle"}, {"pid": 11, "status": "[PROCESSING] work"}]
+    monkeypatch.setattr(process, "update_process_list", lambda session: entries)
+
+    sent_signals = []
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: sent_signals.append((pid, sig)))
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def is_running(self):
+            # Processing PID exits before grace force-kill stage.
+            return self.pid == 10
+
+        def status(self):
+            return "running"
+
+    monkeypatch.setattr(process.psutil, "Process", FakeProc)
+    monkeypatch.setattr(process.time, "sleep", lambda _: None)
+
+    summary = process.terminate_background_tasks(session=object(), processing_grace_seconds=1)
+
+    assert summary["total"] == 2
+    assert summary["processing"] == 1
+    assert summary["force_killed"] == 0
+    # Expect both TERM attempts plus immediate kill for non-processing PID 10.
+    assert any(pid == 10 for pid, _ in sent_signals)
+
+
+def test_terminate_background_tasks_processing_force_killed_after_grace(monkeypatch):
+    entries = [{"pid": 21, "status": "[PROCESSING] long op"}]
+    monkeypatch.setattr(process, "update_process_list", lambda session: entries)
+
+    sent_signals = []
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: sent_signals.append((pid, sig)))
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def is_running(self):
+            return True
+
+        def status(self):
+            return "running"
+
+    monkeypatch.setattr(process.psutil, "Process", FakeProc)
+    monkeypatch.setattr(process.time, "sleep", lambda _: None)
+
+    ticks = iter([0.0, 1.1, 1.1])
+    monkeypatch.setattr(process.time, "time", lambda: next(ticks))
+
+    summary = process.terminate_background_tasks(session=object(), processing_grace_seconds=1)
+
+    assert summary["total"] == 1
+    assert summary["processing"] == 1
+    assert summary["force_killed"] == 1
+    # TERM + force kill on same processing PID.
+    assert len([pid for pid, _ in sent_signals if pid == 21]) >= 2
