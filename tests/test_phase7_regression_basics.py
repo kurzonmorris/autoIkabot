@@ -298,3 +298,78 @@ def test_session_post_marks_broken_on_request_id_retry_budget(monkeypatch):
         Session.post(fake, url="action=request", payload={"x": "1"}, params={})
 
     assert "POST_REQUEST_ID_EXHAUSTED" in str(exc.value)
+
+
+def test_child_entry_signals_escape_and_unblocks_parent(monkeypatch):
+    class FakeQueue:
+        def __init__(self):
+            self.values = []
+
+        def put_nowait(self, value):
+            self.values.append(value)
+
+    class FakeEvent:
+        def __init__(self):
+            self.called = 0
+
+        def set(self):
+            self.called += 1
+
+    class FakeSessionObj:
+        pass
+
+    fake_queue = FakeQueue()
+    fake_event = FakeEvent()
+
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args, **kwargs: None)
+
+    # Replace imports done inside _child_entry
+    import autoIkabot.web.session as session_mod
+    monkeypatch.setattr(session_mod.Session, "from_dict", lambda data: FakeSessionObj())
+    monkeypatch.setattr("autoIkabot.utils.logging.setup_account_logger", lambda *args, **kwargs: None)
+
+    def fake_func(session, event, stdin_fd):
+        raise ReturnToMainMenu()
+
+    menu._child_entry(fake_func, {"username": "u", "mundo": "1", "servidor": "en"}, fake_event, 0, fake_queue)
+
+    assert fake_queue.values == ["escaped"]
+    assert fake_event.called == 1
+
+
+def test_child_entry_signals_crash_and_reports_error(monkeypatch):
+    class FakeQueue:
+        def __init__(self):
+            self.values = []
+
+        def put_nowait(self, value):
+            self.values.append(value)
+
+    class FakeEvent:
+        def __init__(self):
+            self.called = 0
+
+        def set(self):
+            self.called += 1
+
+    class FakeSessionObj:
+        pass
+
+    fake_queue = FakeQueue()
+    fake_event = FakeEvent()
+    reports = []
+
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    import autoIkabot.web.session as session_mod
+    monkeypatch.setattr(session_mod.Session, "from_dict", lambda data: FakeSessionObj())
+    monkeypatch.setattr("autoIkabot.utils.logging.setup_account_logger", lambda *args, **kwargs: None)
+
+    def fake_func(session, event, stdin_fd):
+        raise RuntimeError("boom")
+
+    menu._child_entry(fake_func, {"username": "u", "mundo": "1", "servidor": "en"}, fake_event, 0, fake_queue)
+
+    assert fake_queue.values == ["crashed"]
+    assert fake_event.called == 1
+    assert reports, "Expected crash to be reported as critical error"
