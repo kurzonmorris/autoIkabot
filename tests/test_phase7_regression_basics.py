@@ -3,6 +3,7 @@ from collections import deque
 
 import pytest
 import requests
+from requests.cookies import RequestsCookieJar
 
 from autoIkabot.ui.prompts import ReturnToMainMenu, read, read_input
 from autoIkabot.ui import menu
@@ -373,3 +374,84 @@ def test_child_entry_signals_crash_and_reports_error(monkeypatch):
     assert fake_queue.values == ["crashed"]
     assert fake_event.called == 1
     assert reports, "Expected crash to be reported as critical error"
+
+
+def test_session_import_cookies_ignores_php_sessid_key():
+    class FakeResp:
+        text = "ok"
+
+    class FakeHTTP:
+        def __init__(self):
+            self.cookies = RequestsCookieJar()
+
+        def get(self, *args, **kwargs):
+            return FakeResp()
+
+    fake = type("S", (), {})()
+    fake.host = "example.invalid"
+    fake.url_base = "https://example.invalid/index.php?"
+    fake.s = FakeHTTP()
+    fake._is_expired = lambda *_: False
+    fake._try_extract_token = lambda *_: None
+    fake._try_extract_city_id = lambda *_: None
+
+    ok = Session.import_cookies(
+        fake,
+        '{"ikariam":"IK123", "PHPSESSID":"SHOULD_NOT_BE_IMPORTED"}',
+    )
+
+    assert ok is True
+    assert fake.s.cookies.get("ikariam") == "IK123"
+    assert fake.s.cookies.get("PHPSESSID") is None
+
+
+def test_handle_session_expired_safe_mode_uses_cookie_refresh_first(monkeypatch):
+    # If safe-mode cookie refresh works, login should never be called.
+    fake = type("S", (), {})()
+    fake._continuity_mode = "safe"
+    fake._try_refresh_from_ikariam_cookie = lambda: True
+
+    import autoIkabot.core.login as login_mod
+    monkeypatch.setattr(login_mod, "login", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("should not login")))
+
+    Session._handle_session_expired(fake)
+
+
+def test_handle_session_expired_relogin_updates_session(monkeypatch):
+    class FreshHTTP:
+        def __init__(self):
+            self.headers = {}
+
+    class LoginResult:
+        def __init__(self):
+            self.http_session = FreshHTTP()
+            self.gf_token = "new-gf"
+            self.blackbox_token = "new-bb"
+
+    class OldHTTP:
+        def __init__(self):
+            self.headers = {}
+
+    fake = type("S", (), {})()
+    fake._continuity_mode = "aggressive"
+    fake._account_info = {}
+    fake.gf_token = "old-gf"
+    fake.blackbox_token = "old-bb"
+    fake.is_parent = False
+    fake.s = OldHTTP()
+    fake.game_headers = {"User-Agent": "x"}
+    fake._proxy_active = False
+    fake._action_request_token = "stale"
+
+    import autoIkabot.core.login as login_mod
+    monkeypatch.setattr(login_mod, "login", lambda *args, **kwargs: LoginResult())
+
+    Session._handle_session_expired(fake)
+
+    assert fake.gf_token == "new-gf"
+    assert fake.blackbox_token == "new-bb"
+    assert fake.s.headers.get("User-Agent") == "x"
+    assert fake._action_request_token == ""
+    # Old tokens are staged into account_info before login call.
+    assert fake._account_info["gf_token"] == "old-gf"
+    assert fake._account_info["blackbox_token"] == "old-bb"
