@@ -1,8 +1,13 @@
+import threading
+from collections import deque
+
 import pytest
+import requests
 
 from autoIkabot.ui.prompts import ReturnToMainMenu, read, read_input
 from autoIkabot.ui import menu
 from autoIkabot.utils import process
+from autoIkabot.web.session import Session, SessionBrokenError
 
 
 def test_get_process_health_prefix_contract():
@@ -222,3 +227,74 @@ def test_dispatch_module_auto_times_out_and_terminates_child(monkeypatch):
 
     assert result is False
     assert terminated["value"] is True
+
+
+def test_session_get_marks_broken_on_retry_budget_exhausted(monkeypatch):
+    class FakeHTTP:
+        def get(self, *args, **kwargs):
+            raise requests.exceptions.ConnectionError("boom")
+
+    fake = type("S", (), {})()
+    fake.url_base = "https://example.invalid/index.php?"
+    fake.s = FakeHTTP()
+    fake.request_history = deque(maxlen=5)
+    fake._network_retry_budget = 2
+    fake._enforce_rate_limit = lambda: None
+    fake._try_extract_token = lambda *_: None
+    fake._try_extract_city_id = lambda *_: None
+    fake._is_maintenance = lambda *_: False
+    fake._is_expired = lambda *_: False
+    fake._handle_session_expired = lambda: None
+
+    def mark_broken(code, detail):
+        raise SessionBrokenError(f"{code}|{detail}")
+
+    fake._mark_broken = mark_broken
+    monkeypatch.setattr("autoIkabot.web.session.time.sleep", lambda *_: None)
+
+    with pytest.raises(SessionBrokenError) as exc:
+        Session.get(fake, url="view=city")
+
+    assert "GET_RETRY_EXHAUSTED" in str(exc.value)
+
+
+def test_session_post_marks_broken_on_request_id_retry_budget(monkeypatch):
+    class FakeResp:
+        status_code = 200
+
+        class _Elapsed:
+            @staticmethod
+            def total_seconds():
+                return 0.01
+
+        elapsed = _Elapsed()
+        text = "TXT_ERROR_WRONG_REQUEST_ID"
+
+    class FakeHTTP:
+        def post(self, *args, **kwargs):
+            return FakeResp()
+
+    fake = type("S", (), {})()
+    fake.url_base = "https://example.invalid/index.php?"
+    fake.s = FakeHTTP()
+    fake.request_history = deque(maxlen=5)
+    fake._network_retry_budget = 2
+    fake._enforce_rate_limit = lambda: None
+    fake._try_extract_token = lambda *_: None
+    fake._try_extract_city_id = lambda *_: None
+    fake._is_maintenance = lambda *_: False
+    fake._is_expired = lambda *_: False
+    fake._handle_session_expired = lambda: None
+    fake._action_request_token = ""
+    fake._extract_token = lambda: "abc"
+    fake._token_lock = threading.Lock()
+
+    def mark_broken(code, detail):
+        raise SessionBrokenError(f"{code}|{detail}")
+
+    fake._mark_broken = mark_broken
+
+    with pytest.raises(SessionBrokenError) as exc:
+        Session.post(fake, url="action=request", payload={"x": "1"}, params={})
+
+    assert "POST_REQUEST_ID_EXHAUSTED" in str(exc.value)
