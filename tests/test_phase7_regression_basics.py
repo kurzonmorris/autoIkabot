@@ -541,3 +541,110 @@ def test_launch_saved_configs_no_save_when_nothing_launched(monkeypatch):
     autoLoader.launch_saved_configs(session=object())
 
     assert saved["called"] is False
+
+
+def test_dispatch_background_handles_child_escape(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            self.first = True
+
+        def get_nowait(self):
+            if self.first:
+                self.first = False
+                return "escaped"
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 888
+            self.exitcode = None
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            raise AssertionError("should not terminate on escaped startup")
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    menu._RUNTIME_CHILD_PIDS.clear()
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgMod", "func": lambda *_: None, "background": True},
+    )
+
+    out = capsys.readouterr().out
+    assert "Returning to main menu" in out
+    assert 888 in menu._RUNTIME_CHILD_PIDS
+
+
+def test_dispatch_background_timeout_terminates_child(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    terminated = {"value": False}
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 889
+            self.exitcode = None
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            terminated["value"] = True
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    clock = {"t": 0.0}
+
+    def fake_time():
+        current = clock["t"]
+        clock["t"] += 121.0
+        return current
+
+    monkeypatch.setattr(menu.time, "time", fake_time)
+    menu._RUNTIME_CHILD_PIDS.clear()
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgSlow", "func": lambda *_: None, "background": True},
+    )
+
+    out = capsys.readouterr().out
+    assert "BG_START_TIMEOUT" in out
+    assert terminated["value"] is True
