@@ -1,5 +1,6 @@
 import threading
 import json
+import os
 from collections import deque
 from contextlib import contextmanager
 
@@ -1006,3 +1007,36 @@ def test_dispatch_module_auto_returns_false_when_child_exits_during_config(monke
 
     assert ok is False
     assert 333 in menu._RUNTIME_CHILD_PIDS
+
+
+def test_file_lock_creates_and_removes_lockfile(tmp_path):
+    target = tmp_path / "state.json"
+    lock_path = str(target) + ".lock"
+
+    assert not os.path.exists(lock_path)
+    with process._file_lock(str(target), timeout=0.2, poll=0.01):
+        assert os.path.exists(lock_path)
+    assert not os.path.exists(lock_path)
+
+
+def test_file_lock_timeout_when_lock_exists(tmp_path, monkeypatch):
+    target = tmp_path / "state_timeout.json"
+    lock_path = str(target) + ".lock"
+    with open(lock_path, "w") as f:
+        f.write("999")
+
+    tick = {"t": 0.0}
+
+    def fake_time():
+        tick["t"] += 0.2
+        return tick["t"]
+
+    monkeypatch.setattr(process.time, "time", fake_time)
+    monkeypatch.setattr(process.time, "sleep", lambda *_: None)
+
+    with pytest.raises(TimeoutError):
+        with process._file_lock(str(target), timeout=0.5, poll=0.01):
+            pass
+
+    # Existing lock should remain if we never acquired it.
+    assert os.path.exists(lock_path)
