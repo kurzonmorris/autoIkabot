@@ -892,6 +892,43 @@ def test_update_process_status_lock_timeout_leaves_file_unchanged(tmp_path, monk
     assert data == original
 
 
+def test_get_process_health_explicit_state_beats_frozen(monkeypatch):
+    # Even with stale heartbeat, explicit state prefix should win over FROZEN fallback.
+    monkeypatch.setattr(process.time, "time", lambda: 10_000.0)
+    stale = 10_000.0 - process.HEARTBEAT_STALE_THRESHOLD - 50
+    assert process.get_process_health({"status": "[WAITING] hold", "last_heartbeat": stale}) == "WAITING"
+    assert process.get_process_health({"status": "[PAUSED] hold", "last_heartbeat": stale}) == "PAUSED"
+    assert process.get_process_health({"status": "[PROCESSING] hold", "last_heartbeat": stale}) == "PROCESSING"
+    assert process.get_process_health({"status": "[BROKEN] hold", "last_heartbeat": stale}) == "BROKEN"
+
+
+def test_sleep_with_heartbeat_short_sleep_no_refresh(monkeypatch):
+    calls = []
+
+    class FakeSession:
+        _status = "[WAITING] short"
+
+        def setStatus(self, status):
+            calls.append(status)
+
+    monkeypatch.setattr(process.time, "sleep", lambda _: None)
+    process.sleep_with_heartbeat(FakeSession(), seconds=2, interval=300)
+
+    # No intermediate heartbeat refresh for single-chunk sleeps.
+    assert calls == []
+
+
+def test_read_critical_errors_non_list_payload_returns_empty(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    err_file = tmp_path / "errors_obj.json"
+    err_file.write_text(json.dumps({"oops": 1}))
+
+    monkeypatch.setattr(process, "_get_error_file_path", lambda _s: str(err_file))
+
+    errors = process.read_critical_errors(fake_session)
+    assert errors == []
+
+
 def test_dispatch_background_falls_back_to_sync_when_stdin_unavailable(monkeypatch):
     called = {"sync": 0}
 
