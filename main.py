@@ -287,8 +287,11 @@ def _shutdown_children(session, logger, *, print_summary: bool, logout: bool) ->
     if session is None:
         return
     try:
+        from autoIkabot.modules.autoLoader import record_shutdown_restore_states
         from autoIkabot.ui.menu import get_runtime_child_pids
         from autoIkabot.utils.process import terminate_background_tasks
+
+        record_shutdown_restore_states(session)
 
         summary = terminate_background_tasks(
             session,

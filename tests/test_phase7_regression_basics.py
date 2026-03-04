@@ -1145,6 +1145,7 @@ def test_shutdown_children_terminates_runtime_and_logs_out(monkeypatch, capsys):
         def exception(self, *args, **kwargs):
             raise AssertionError("unexpected logger.exception")
 
+    monkeypatch.setattr("autoIkabot.modules.autoLoader.record_shutdown_restore_states", lambda session: None)
     monkeypatch.setattr("autoIkabot.ui.menu.get_runtime_child_pids", lambda: [11, 22])
 
     seen = {}
@@ -1185,6 +1186,7 @@ def test_shutdown_children_handles_terminate_failure_and_still_logs_out(monkeypa
         def exception(self, msg):
             self.messages.append(msg)
 
+    monkeypatch.setattr("autoIkabot.modules.autoLoader.record_shutdown_restore_states", lambda session: None)
     monkeypatch.setattr("autoIkabot.ui.menu.get_runtime_child_pids", lambda: [99])
     monkeypatch.setattr(
         "autoIkabot.utils.process.terminate_background_tasks",
@@ -1197,3 +1199,88 @@ def test_shutdown_children_handles_terminate_failure_and_still_logs_out(monkeypa
 
     assert session.logged_out is True
     assert any("Background shutdown cleanup failed" in m for m in logger.messages)
+
+
+
+def test_record_shutdown_restore_states_marks_only_running_or_paused(monkeypatch):
+    cfg_data = {
+        "configs": [
+            {"module_name": "RunMod", "enabled": True},
+            {"module_name": "PauseMod", "enabled": True},
+            {"module_name": "BrokenMod", "enabled": True},
+        ]
+    }
+
+    monkeypatch.setattr(autoLoader, "_load_autoload_configs", lambda session: cfg_data)
+    saved = {"called": False}
+
+    def fake_save(_session, _data):
+        saved["called"] = True
+
+    monkeypatch.setattr(autoLoader, "_save_autoload_configs", fake_save)
+    monkeypatch.setattr(
+        process,
+        "update_process_list",
+        lambda _session: [
+            {"action": "RunMod", "status": "[WAITING] ships", "last_heartbeat": 1000},
+            {"action": "PauseMod", "status": "[PAUSED] timer", "last_heartbeat": 1000},
+            {"action": "BrokenMod", "status": "[BROKEN] fail", "last_heartbeat": 1000},
+        ],
+    )
+
+    autoLoader.record_shutdown_restore_states(session=object())
+
+    run_cfg = next(c for c in cfg_data["configs"] if c["module_name"] == "RunMod")
+    pause_cfg = next(c for c in cfg_data["configs"] if c["module_name"] == "PauseMod")
+    broken_cfg = next(c for c in cfg_data["configs"] if c["module_name"] == "BrokenMod")
+
+    assert run_cfg["last_shutdown_restore"] is True
+    assert pause_cfg["last_shutdown_restore"] is True
+    assert broken_cfg["last_shutdown_restore"] is False
+    assert broken_cfg["last_shutdown_health"] == "BROKEN"
+    assert saved["called"] is True
+
+
+def test_launch_saved_configs_respects_last_shutdown_restore_flag(monkeypatch):
+    cfg_data = {
+        "configs": [
+            {
+                "enabled": True,
+                "module_name": "RestoreMe",
+                "module_number": 1,
+                "description": "ok",
+                "inputs": ["a"],
+                "last_shutdown_restore": True,
+                "last_shutdown_health": "RUNNING",
+            },
+            {
+                "enabled": True,
+                "module_name": "SkipMe",
+                "module_number": 2,
+                "description": "broken",
+                "inputs": ["b"],
+                "last_shutdown_restore": False,
+                "last_shutdown_health": "BROKEN",
+            },
+        ]
+    }
+
+    monkeypatch.setattr(autoLoader, "_load_autoload_configs", lambda session: cfg_data)
+    monkeypatch.setattr(autoLoader, "_save_autoload_configs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        menu,
+        "get_registered_modules",
+        lambda: [
+            {"name": "RestoreMe", "number": 1, "background": True},
+            {"name": "SkipMe", "number": 2, "background": True},
+        ],
+    )
+    monkeypatch.setattr(process, "update_process_list", lambda session: [])
+    monkeypatch.setattr(process, "is_process_frozen", lambda p: False)
+
+    launched = []
+    monkeypatch.setattr(menu, "dispatch_module_auto", lambda _session, mod, inputs: launched.append((mod["name"], inputs)) or True)
+
+    autoLoader.launch_saved_configs(session=object())
+
+    assert launched == [("RestoreMe", ["a"])]
