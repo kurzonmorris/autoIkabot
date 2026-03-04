@@ -834,3 +834,59 @@ def test_update_process_status_updates_current_pid_and_heartbeat(tmp_path, monke
     assert by_pid[10]["last_heartbeat"] == 123.456
     # Ensure unrelated entries are untouched.
     assert by_pid[11]["status"] == "other"
+
+
+def test_update_process_status_noop_when_pid_missing(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    proc_file = tmp_path / "processes_status_missing.json"
+    original = [
+        {"pid": 11, "action": "y", "status": "other", "last_heartbeat": 2.0},
+    ]
+    proc_file.write_text(json.dumps(original))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda _s: str(proc_file))
+    monkeypatch.setattr(process.os, "getpid", lambda: 99)
+
+    process.update_process_status(fake_session, "[WAITING] idle")
+
+    data = json.loads(proc_file.read_text())
+    assert data == original
+
+
+def test_update_process_list_lock_timeout_returns_empty(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    proc_file = tmp_path / "processes_timeout.json"
+    proc_file.write_text("[]")
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda _s: str(proc_file))
+
+    @contextmanager
+    def timeout_lock(_path, timeout=5.0, poll=0.05):
+        raise TimeoutError("lock busy")
+        yield
+
+    monkeypatch.setattr(process, "_file_lock", timeout_lock)
+
+    out = process.update_process_list(fake_session)
+    assert out == []
+
+
+def test_update_process_status_lock_timeout_leaves_file_unchanged(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    proc_file = tmp_path / "processes_status_timeout.json"
+    original = [{"pid": 10, "action": "x", "status": "old", "last_heartbeat": 1.0}]
+    proc_file.write_text(json.dumps(original))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda _s: str(proc_file))
+
+    @contextmanager
+    def timeout_lock(_path, timeout=5.0, poll=0.05):
+        raise TimeoutError("lock busy")
+        yield
+
+    monkeypatch.setattr(process, "_file_lock", timeout_lock)
+
+    process.update_process_status(fake_session, "[WAITING] idle")
+
+    data = json.loads(proc_file.read_text())
+    assert data == original
