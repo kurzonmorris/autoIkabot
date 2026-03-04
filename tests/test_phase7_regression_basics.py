@@ -306,6 +306,63 @@ def test_session_post_marks_broken_on_request_id_retry_budget(monkeypatch):
     assert "POST_REQUEST_ID_EXHAUSTED" in str(exc.value)
 
 
+def test_session_mark_broken_child_reports_critical_error(monkeypatch):
+    fake = type("S", (), {})()
+    fake.is_parent = False
+    statuses = []
+    fake.setStatus = lambda status: statuses.append(status)
+
+    reports = []
+    import autoIkabot.utils.process as process_mod
+    monkeypatch.setattr(process_mod, "report_critical_error", lambda *args: reports.append(args))
+
+    with pytest.raises(SessionBrokenError) as exc:
+        Session._mark_broken(fake, "X_CODE", "details")
+
+    msg = str(exc.value)
+    assert "X_CODE" in msg
+    assert "details" in msg
+    assert statuses and statuses[-1].startswith("[BROKEN] X_CODE")
+    assert reports and reports[-1][1] == "Session"
+
+
+def test_session_mark_broken_parent_does_not_report_critical_error(monkeypatch):
+    fake = type("S", (), {})()
+    fake.is_parent = True
+    statuses = []
+    fake.setStatus = lambda status: statuses.append(status)
+
+    import autoIkabot.utils.process as process_mod
+    monkeypatch.setattr(process_mod, "report_critical_error", lambda *args: (_ for _ in ()).throw(RuntimeError("should not report")))
+
+    with pytest.raises(SessionBrokenError):
+        Session._mark_broken(fake, "PARENT_CODE", "details")
+
+    assert statuses and statuses[-1].startswith("[BROKEN] PARENT_CODE")
+
+
+def test_session_mark_broken_still_raises_when_reporting_fails(monkeypatch):
+    fake = type("S", (), {})()
+    fake.is_parent = False
+
+    def broken_status(_status):
+        raise RuntimeError("status update failed")
+
+    fake.setStatus = broken_status
+
+    import autoIkabot.utils.process as process_mod
+    monkeypatch.setattr(
+        process_mod,
+        "report_critical_error",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("report failed")),
+    )
+
+    with pytest.raises(SessionBrokenError) as exc:
+        Session._mark_broken(fake, "REPORT_FAIL", "details")
+
+    assert "REPORT_FAIL" in str(exc.value)
+
+
 def test_child_entry_signals_escape_and_unblocks_parent(monkeypatch):
     class FakeQueue:
         def __init__(self):
