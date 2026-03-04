@@ -7,6 +7,7 @@ from requests.cookies import RequestsCookieJar
 
 from autoIkabot.ui.prompts import ReturnToMainMenu, read, read_input
 from autoIkabot.ui import menu
+from autoIkabot.modules import autoLoader
 from autoIkabot.utils import process
 from autoIkabot.web.session import Session, SessionBrokenError
 
@@ -455,3 +456,88 @@ def test_handle_session_expired_relogin_updates_session(monkeypatch):
     # Old tokens are staged into account_info before login call.
     assert fake._account_info["gf_token"] == "old-gf"
     assert fake._account_info["blackbox_token"] == "old-bb"
+
+
+def test_launch_saved_configs_skips_healthy_and_broken_launches_frozen(monkeypatch):
+    cfg_data = {
+        "configs": [
+            {
+                "enabled": True,
+                "module_name": "HealthyMod",
+                "module_number": 1,
+                "description": "healthy",
+                "inputs": [],
+            },
+            {
+                "enabled": True,
+                "module_name": "BrokenMod",
+                "module_number": 2,
+                "description": "broken",
+                "inputs": [],
+            },
+            {
+                "enabled": True,
+                "module_name": "FrozenMod",
+                "module_number": 3,
+                "description": "frozen",
+                "inputs": ["x"],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(autoLoader, "_load_autoload_configs", lambda session: cfg_data)
+    saved = {"called": False}
+    monkeypatch.setattr(autoLoader, "_save_autoload_configs", lambda session, data: saved.__setitem__("called", True))
+
+    monkeypatch.setattr(menu, "get_registered_modules", lambda: [
+        {"name": "HealthyMod", "number": 1, "background": True},
+        {"name": "BrokenMod", "number": 2, "background": True},
+        {"name": "FrozenMod", "number": 3, "background": True},
+    ])
+
+    plist = [
+        {"action": "HealthyMod", "pid": 10, "status": "running", "last_heartbeat": 1000},
+        {"action": "BrokenMod", "pid": 11, "status": "[BROKEN] fail", "last_heartbeat": 1000},
+        {"action": "FrozenMod", "pid": 12, "status": "running", "last_heartbeat": 1},
+    ]
+    monkeypatch.setattr(process, "update_process_list", lambda session: plist)
+    monkeypatch.setattr(process, "is_process_frozen", lambda p: p["action"] == "FrozenMod")
+
+    launched = []
+    monkeypatch.setattr(menu, "dispatch_module_auto", lambda session, mod, inputs: launched.append((mod["number"], inputs)) or True)
+    monkeypatch.setattr(autoLoader.time, "time", lambda: 1234.0)
+
+    autoLoader.launch_saved_configs(session=object())
+
+    # Healthy and broken are considered already-running/healthy for autoload skip.
+    assert launched == [(3, ["x"])]
+    assert saved["called"] is True
+    frozen_cfg = next(c for c in cfg_data["configs"] if c["module_name"] == "FrozenMod")
+    assert frozen_cfg["last_launched"] == 1234.0
+    assert frozen_cfg["launch_count"] == 1
+
+
+def test_launch_saved_configs_no_save_when_nothing_launched(monkeypatch):
+    cfg_data = {
+        "configs": [
+            {
+                "enabled": True,
+                "module_name": "OnlyMod",
+                "module_number": 1,
+                "description": "already up",
+                "inputs": [],
+            }
+        ]
+    }
+
+    monkeypatch.setattr(autoLoader, "_load_autoload_configs", lambda session: cfg_data)
+    saved = {"called": False}
+    monkeypatch.setattr(autoLoader, "_save_autoload_configs", lambda session, data: saved.__setitem__("called", True))
+    monkeypatch.setattr(menu, "get_registered_modules", lambda: [{"name": "OnlyMod", "number": 1, "background": True}])
+    monkeypatch.setattr(process, "update_process_list", lambda session: [{"action": "OnlyMod", "pid": 1, "status": "running", "last_heartbeat": 1000}])
+    monkeypatch.setattr(process, "is_process_frozen", lambda p: False)
+    monkeypatch.setattr(menu, "dispatch_module_auto", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("should not launch")))
+
+    autoLoader.launch_saved_configs(session=object())
+
+    assert saved["called"] is False
