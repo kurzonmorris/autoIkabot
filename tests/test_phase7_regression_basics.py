@@ -1129,3 +1129,71 @@ def test_file_lock_timeout_when_lock_exists(tmp_path, monkeypatch):
 
     # Existing lock should remain if we never acquired it.
     assert os.path.exists(lock_path)
+
+
+def test_shutdown_children_terminates_runtime_and_logs_out(monkeypatch, capsys):
+    import main as main_mod
+
+    class FakeSession:
+        def __init__(self):
+            self.logged_out = False
+
+        def logout(self):
+            self.logged_out = True
+
+    class FakeLogger:
+        def exception(self, *args, **kwargs):
+            raise AssertionError("unexpected logger.exception")
+
+    monkeypatch.setattr("autoIkabot.ui.menu.get_runtime_child_pids", lambda: [11, 22])
+
+    seen = {}
+
+    def fake_terminate(session, runtime_pids, processing_grace_seconds):
+        seen["session"] = session
+        seen["runtime_pids"] = runtime_pids
+        seen["grace"] = processing_grace_seconds
+        return {"total": 2, "processing": 1, "force_killed": 0}
+
+    monkeypatch.setattr("autoIkabot.utils.process.terminate_background_tasks", fake_terminate)
+
+    session = FakeSession()
+    main_mod._shutdown_children(session, FakeLogger(), print_summary=True, logout=True)
+
+    out = capsys.readouterr().out
+    assert "Shutdown: stopped 2 task(s)" in out
+    assert seen["session"] is session
+    assert seen["runtime_pids"] == [11, 22]
+    assert seen["grace"] == 120
+    assert session.logged_out is True
+
+
+def test_shutdown_children_handles_terminate_failure_and_still_logs_out(monkeypatch):
+    import main as main_mod
+
+    class FakeSession:
+        def __init__(self):
+            self.logged_out = False
+
+        def logout(self):
+            self.logged_out = True
+
+    class FakeLogger:
+        def __init__(self):
+            self.messages = []
+
+        def exception(self, msg):
+            self.messages.append(msg)
+
+    monkeypatch.setattr("autoIkabot.ui.menu.get_runtime_child_pids", lambda: [99])
+    monkeypatch.setattr(
+        "autoIkabot.utils.process.terminate_background_tasks",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    logger = FakeLogger()
+    session = FakeSession()
+    main_mod._shutdown_children(session, logger, print_summary=False, logout=True)
+
+    assert session.logged_out is True
+    assert any("Background shutdown cleanup failed" in m for m in logger.messages)
