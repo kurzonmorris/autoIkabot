@@ -890,3 +890,82 @@ def test_update_process_status_lock_timeout_leaves_file_unchanged(tmp_path, monk
 
     data = json.loads(proc_file.read_text())
     assert data == original
+
+
+def test_dispatch_background_falls_back_to_sync_when_stdin_unavailable(monkeypatch):
+    called = {"sync": 0}
+
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: (_ for _ in ()).throw(ValueError("no fd")))
+    monkeypatch.setattr(menu, "_dispatch_sync", lambda session, mod: called.__setitem__("sync", called["sync"] + 1))
+
+    menu._dispatch_background(
+        session=object(),
+        mod={"name": "SyncFallback", "func": lambda *_: None, "background": True},
+    )
+
+    assert called["sync"] == 1
+
+
+def test_dispatch_module_auto_returns_false_when_stdin_unavailable(monkeypatch):
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: (_ for _ in ()).throw(ValueError("no fd")))
+    # Ensure predetermined input setup/clear won't leak state on failure path.
+    set_calls = []
+
+    import autoIkabot.ui.prompts as prompts_mod
+    monkeypatch.setattr(prompts_mod, "set_predetermined_input", lambda vals: set_calls.append(list(vals)))
+
+    ok = menu.dispatch_module_auto(
+        session=object(),
+        mod={"name": "AutoFail", "func": lambda *_: None, "background": True},
+        predetermined_inputs=[1, 2],
+    )
+
+    assert ok is False
+    assert set_calls == [[1, 2], []]
+
+
+def test_dispatch_module_auto_returns_false_when_child_exits_during_config(monkeypatch):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 333
+            self.exitcode = 9
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return False
+
+        def terminate(self):
+            raise AssertionError("should not terminate already-exited child")
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    menu._RUNTIME_CHILD_PIDS.clear()
+
+    ok = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "DeadChild", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    assert ok is False
+    assert 333 in menu._RUNTIME_CHILD_PIDS
