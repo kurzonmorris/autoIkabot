@@ -6,6 +6,7 @@ import requests
 from requests.cookies import RequestsCookieJar
 
 from autoIkabot.ui.prompts import ReturnToMainMenu, read, read_input
+import autoIkabot.ui.prompts as prompts
 from autoIkabot.ui import menu
 from autoIkabot.modules import autoLoader
 from autoIkabot.utils import process
@@ -648,3 +649,79 @@ def test_dispatch_background_timeout_terminates_child(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "BG_START_TIMEOUT" in out
     assert terminated["value"] is True
+
+
+def test_dispatch_background_reports_start_fail_when_child_dies(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 990
+            self.exitcode = 17
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return False
+
+        def terminate(self):
+            raise AssertionError("should not terminate dead child")
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgDead", "func": lambda *_: None, "background": True},
+    )
+
+    out = capsys.readouterr().out
+    assert "BG_START_FAIL" in out
+
+
+def test_read_password_non_tty_escape(monkeypatch):
+    monkeypatch.setattr(prompts, "has_tty", lambda: False)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: "\\")
+    with pytest.raises(ReturnToMainMenu):
+        prompts.read_password("Password: ")
+
+
+def test_terminate_background_tasks_includes_runtime_only_pids(monkeypatch):
+    monkeypatch.setattr(process, "update_process_list", lambda session: [])
+    sent = []
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def is_running(self):
+            return False
+
+        def status(self):
+            return "zombie"
+
+    monkeypatch.setattr(process.psutil, "Process", FakeProc)
+
+    summary = process.terminate_background_tasks(session=object(), runtime_pids={12345}, processing_grace_seconds=1)
+
+    assert summary["total"] == 1
+    assert summary["processing"] == 0
+    assert any(pid == 12345 for pid, _ in sent)
