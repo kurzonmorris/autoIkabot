@@ -772,3 +772,65 @@ def test_read_critical_errors_lock_timeout_returns_empty(tmp_path, monkeypatch):
 
     errors = process.read_critical_errors(fake_session)
     assert errors == []
+
+
+def test_update_process_list_filters_dead_and_deduplicates(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    proc_file = tmp_path / "processes.json"
+    proc_file.write_text(json.dumps([
+        {"pid": 1, "action": "alive-old", "status": "running"},
+        {"pid": 2, "action": "dead", "status": "running"},
+        {"pid": 3, "action": "wrong-name", "status": "running"},
+    ]))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda _s: str(proc_file))
+    monkeypatch.setattr(process, "_get_our_process_name", lambda: "python")
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def status(self):
+            return {1: "running", 2: "zombie", 3: "running", 4: "running"}[self.pid]
+
+        def name(self):
+            return {1: "python", 2: "python", 3: "other", 4: "python"}[self.pid]
+
+    monkeypatch.setattr(process.psutil, "Process", FakeProc)
+
+    updated = process.update_process_list(
+        fake_session,
+        new_processes=[
+            {"pid": 1, "action": "alive-new", "status": "new"},
+            {"pid": 4, "action": "fresh", "status": "new"},
+        ],
+    )
+
+    # Keeps only alive + matching process-name entries and deduplicates by PID.
+    by_pid = {e["pid"]: e for e in updated}
+    assert set(by_pid.keys()) == {1, 4}
+    # Existing PID=1 entry remains (new duplicate is ignored by existing_pids gate).
+    assert by_pid[1]["action"] == "alive-old"
+    assert by_pid[4]["action"] == "fresh"
+
+
+def test_update_process_status_updates_current_pid_and_heartbeat(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    proc_file = tmp_path / "processes_status.json"
+    proc_file.write_text(json.dumps([
+        {"pid": 10, "action": "x", "status": "old", "last_heartbeat": 1.0},
+        {"pid": 11, "action": "y", "status": "other", "last_heartbeat": 2.0},
+    ]))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda _s: str(proc_file))
+    monkeypatch.setattr(process.os, "getpid", lambda: 10)
+    monkeypatch.setattr(process.time, "time", lambda: 123.456)
+
+    process.update_process_status(fake_session, "[WAITING] idle")
+
+    data = json.loads(proc_file.read_text())
+    by_pid = {e["pid"]: e for e in data}
+    assert by_pid[10]["status"] == "[WAITING] idle"
+    assert by_pid[10]["last_heartbeat"] == 123.456
+    # Ensure unrelated entries are untouched.
+    assert by_pid[11]["status"] == "other"
