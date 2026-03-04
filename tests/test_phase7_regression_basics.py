@@ -930,6 +930,38 @@ def test_read_critical_errors_non_list_payload_returns_empty(tmp_path, monkeypat
     assert errors == []
 
 
+def test_session_export_cookies_only_ikariam():
+    class FakeHTTP:
+        def __init__(self):
+            self.cookies = RequestsCookieJar()
+            self.cookies.set("ikariam", "IK-VAL", domain="example.invalid", path="/")
+            self.cookies.set("PHPSESSID", "PHS", domain="example.invalid", path="/")
+
+    fake = type("S", (), {})()
+    fake.s = FakeHTTP()
+    fake.host = "example.invalid"
+    fake._get_ikariam_cookie = lambda: Session._get_ikariam_cookie(fake)
+
+    exported = Session.export_cookies(fake)
+    assert json.loads(exported) == {"ikariam": "IK-VAL"}
+
+
+def test_session_export_cookies_js_contains_ikariam_value():
+    class FakeHTTP:
+        def __init__(self):
+            self.cookies = RequestsCookieJar()
+            self.cookies.set("ikariam", "IK-JS", domain="example.invalid", path="/")
+
+    fake = type("S", (), {})()
+    fake.s = FakeHTTP()
+    fake.host = "example.invalid"
+    fake._get_ikariam_cookie = lambda: Session._get_ikariam_cookie(fake)
+
+    script = Session.export_cookies_js(fake)
+    assert "IK-JS" in script
+    assert "PHPSESSID" not in script
+
+
 def test_dispatch_background_falls_back_to_sync_when_stdin_unavailable(monkeypatch):
     called = {"sync": 0}
 

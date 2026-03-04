@@ -606,9 +606,11 @@ class Session:
             return "// No ikariam session cookie found"
         cookie_json = json.dumps({"ikariam": ikariam})
         return (
-            'cookies={};i=0;for(let cookie in cookies)'
-            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
-        ).format(cookie_json)
+            f"const cookies = {cookie_json};"
+            "Object.entries(cookies).forEach(([k, v]) => {"
+            "document.cookie = `${k}=${v}`;"
+            "});"
+        )
 
     def import_cookies(self, cookie_input: str) -> bool:
         """Import an ikariam cookie value from user input.
