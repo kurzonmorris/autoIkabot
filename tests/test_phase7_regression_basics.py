@@ -1,5 +1,7 @@
 import threading
+import json
 from collections import deque
+from contextlib import contextmanager
 
 import pytest
 import requests
@@ -725,3 +727,48 @@ def test_terminate_background_tasks_includes_runtime_only_pids(monkeypatch):
     assert summary["total"] == 1
     assert summary["processing"] == 0
     assert any(pid == 12345 for pid, _ in sent)
+
+
+def test_report_and_read_critical_errors_roundtrip(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    err_file = tmp_path / "errors.json"
+
+    monkeypatch.setattr(process, "_get_error_file_path", lambda _s: str(err_file))
+    monkeypatch.setattr(process.os, "getpid", lambda: 4242)
+
+    process.report_critical_error(fake_session, "modA", "E1")
+    process.report_critical_error(fake_session, "modB", "E2")
+
+    errors = process.read_critical_errors(fake_session)
+    assert [e["module"] for e in errors] == ["modA", "modB"]
+    assert [e["message"] for e in errors] == ["E1", "E2"]
+    assert not err_file.exists(), "read_critical_errors should clear the file after reading"
+
+
+def test_read_critical_errors_handles_malformed_json(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    err_file = tmp_path / "errors_bad.json"
+    err_file.write_text("{not-json")
+
+    monkeypatch.setattr(process, "_get_error_file_path", lambda _s: str(err_file))
+
+    errors = process.read_critical_errors(fake_session)
+    assert errors == []
+
+
+def test_read_critical_errors_lock_timeout_returns_empty(tmp_path, monkeypatch):
+    fake_session = type("S", (), {"servidor": "en", "username": "user"})()
+    err_file = tmp_path / "errors_timeout.json"
+    err_file.write_text(json.dumps([{"module": "x"}]))
+
+    monkeypatch.setattr(process, "_get_error_file_path", lambda _s: str(err_file))
+
+    @contextmanager
+    def timeout_lock(_path, timeout=5.0, poll=0.05):
+        raise TimeoutError("lock busy")
+        yield
+
+    monkeypatch.setattr(process, "_file_lock", timeout_lock)
+
+    errors = process.read_critical_errors(fake_session)
+    assert errors == []
