@@ -38,6 +38,29 @@ def _format_duration(seconds: float) -> str:
     return f"{days}d {remaining_hours}h"
 
 
+
+
+def _format_heartbeat_age(now: float, entry: dict) -> str:
+    """Return human-readable heartbeat age for a process entry."""
+    last_hb = entry.get("last_heartbeat")
+    if last_hb is None:
+        return "legacy"
+    age = max(0.0, now - float(last_hb))
+    return _format_duration(age)
+
+
+def _extract_last_error(status: str) -> str:
+    """Extract compact error text from a BROKEN status line."""
+    if not status:
+        return "-"
+    raw = str(status).strip()
+    up = raw.upper()
+    marker = "[BROKEN]"
+    if marker in up:
+        idx = up.find(marker)
+        raw = raw[idx + len(marker):].strip()
+    return raw or "-"
+
 def _get_autoload_config_for(session, module_name: str):
     """Find an enabled autoLoader config matching the given module name.
 
@@ -143,18 +166,19 @@ def taskStatus(session) -> None:
         now = time.time()
         healthy_count = 0
         frozen_indices = []
+        broken_indices = []
         paused_count = 0
 
         print("  Task Status")
         print("  " + "=" * 50)
         print()
         print(
-            f"  {'#':>3}  {'PID':>7}  {'Task':<25}"
-            f"  {'Health':<8}  {'Uptime':<10}  Status"
+            f"  {'#':>3}  {'PID':>7}  {'Task':<22}"
+            f"  {'Health':<10}  {'HB Age':<8}  {'Uptime':<9}  Detail"
         )
         print(
-            f"  {'---':>3}  {'-------':>7}  {'-' * 25}"
-            f"  {'-' * 8}  {'-' * 10}  {'-' * 30}"
+            f"  {'---':>3}  {'-------':>7}  {'-' * 22}"
+            f"  {'-' * 10}  {'-' * 8}  {'-' * 9}  {'-' * 34}"
         )
 
         for i, proc in enumerate(process_list):
@@ -162,24 +186,28 @@ def taskStatus(session) -> None:
 
             if health == "FROZEN":
                 frozen_indices.append(i)
-            elif health == "PAUSED":
-                paused_count += 1
-                healthy_count += 1  # PAUSED is not unhealthy, just waiting
+            elif health in ("PAUSED", "WAITING", "PROCESSING", "OK"):
+                if health == "PAUSED":
+                    paused_count += 1
+                healthy_count += 1
+            elif health == "BROKEN":
+                broken_indices.append(i)
             else:
                 healthy_count += 1
 
-            # Uptime
+            # Uptime + heartbeat age
             start_time = proc.get("date")
             uptime = _format_duration(now - start_time) if start_time else "?"
+            hb_age = _format_heartbeat_age(now, proc)
 
-            # Status message
             status = proc.get("status", "running")
-            if len(status) > 30:
-                status = status[:27] + "..."
+            detail = _extract_last_error(status) if health == "BROKEN" else status
+            if len(detail) > 34:
+                detail = detail[:31] + "..."
 
             print(
-                f"  {i + 1:>3}  {proc['pid']:>7}  {proc.get('action', '?'):<25}"
-                f"  {health:<8}  {uptime:<10}  {status}"
+                f"  {i + 1:>3}  {proc['pid']:>7}  {proc.get('action', '?'):<22}"
+                f"  {health:<10}  {hb_age:<8}  {uptime:<9}  {detail}"
             )
 
         total = len(process_list)
@@ -187,11 +215,14 @@ def taskStatus(session) -> None:
         summary = f"  {healthy_count} of {total} tasks healthy."
         if paused_count > 0:
             summary += f" {paused_count} paused."
+        broken_count = len([p for p in process_list if get_process_health(p) == "BROKEN"])
+        if broken_count > 0:
+            summary += f" {broken_count} broken."
         if frozen_indices:
             summary += f" {len(frozen_indices)} frozen."
         print(summary)
 
-        if not frozen_indices and paused_count == 0:
+        if not frozen_indices and not broken_indices and paused_count == 0:
             print()
             print("  All tasks running normally.")
             enter()
@@ -209,6 +240,14 @@ def taskStatus(session) -> None:
             actions.append(("check_paused", None, None, None))
             print(f"  ({action_idx}) Check paused tasks now (trigger immediate resource check)")
             has_check_now = True
+
+        # Broken task actions (always kill/restart manually)
+        for bi in broken_indices:
+            proc = process_list[bi]
+            action_idx += 1
+            actions.append(("broken_kill", bi, proc, None))
+            action_name = proc.get("action", "?")
+            print(f"  ({action_idx}) Kill broken: {action_name} (restart manually from menu)")
 
         # Frozen task actions
         for fi in frozen_indices:
@@ -229,6 +268,15 @@ def taskStatus(session) -> None:
 
         choice = read(min=0, max=len(actions), digit=True)
         if choice == 0:
+            # On exit, automatically kill broken modules so user can restart cleanly.
+            for bi in broken_indices:
+                proc = process_list[bi]
+                try:
+                    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                    os.kill(proc["pid"], sig)
+                    logger.info("Auto-killed broken process %d (%s)", proc["pid"], proc.get("action", "?"))
+                except (ProcessLookupError, PermissionError):
+                    pass
             return
 
         action_entry = actions[choice - 1]
@@ -236,6 +284,26 @@ def taskStatus(session) -> None:
         if action_entry[0] == "check_paused":
             # Write trigger file to wake up paused construction tasks
             _trigger_construction_check(session)
+            enter()
+            continue
+
+        if action_entry[0] == "broken_kill":
+            _, _, proc, _ = action_entry
+            action_name = proc.get("action", "?")
+            pid = proc["pid"]
+            print(f"\n  Kill broken '{action_name}' (PID {pid})? [Y/n]")
+            confirm = read(values=["y", "Y", "n", "N", ""])
+            if confirm.lower() == "n":
+                continue
+            try:
+                sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                os.kill(pid, sig)
+                logger.info("Killed broken process %d (%s)", pid, action_name)
+                print(f"  Killed: {action_name} (PID {pid})")
+            except ProcessLookupError:
+                print(f"  Process {pid} already dead.")
+            except PermissionError:
+                print(f"  Permission denied killing PID {pid}.")
             enter()
             continue
 

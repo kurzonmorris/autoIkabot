@@ -5,8 +5,8 @@ Initializes the debug logging system, presents the account selection UI,
 runs the login flow, creates a game session, registers modules, and
 enters the main menu loop.
 
-Background modules are spawned as child processes. When the user exits
-the menu, the parent process terminates while children continue running.
+Background modules are spawned as child processes and are always terminated
+when the parent exits (menu exit, Ctrl+C, or unhandled error path).
 """
 
 import multiprocessing
@@ -44,6 +44,7 @@ def main() -> None:
     logger = get_logger("main")
     logger.info("autoIkabot %s starting", VERSION)
 
+    session = None
     try:
         # --- Phase 1: Account selection ---
         account_info = run_account_selection()
@@ -264,34 +265,51 @@ def main() -> None:
 
         run_menu(session)
 
-        # User chose Exit — check for background tasks
-        from autoIkabot.utils.process import update_process_list
-        process_list = update_process_list(session)
-        if process_list:
-            count = len(process_list)
-            print(f"\n  {count} background task(s) still running.")
-            if os.name == "nt":
-                print("  WARNING (Windows): Background tasks will be killed")
-                print("  if you close this terminal window. Keep it open for")
-                print("  tasks to continue running.")
-            else:
-                print("  (Linux/Mac): Tasks will continue running even after")
-                print("  you close the terminal.")
-            print("  Run autoIkabot again to manage them.")
-
-        session.logout()
-        logger.info("Parent process exiting, children will continue.")
-        # os._exit() kills only this process — child processes survive on Unix
+        # User chose Exit — terminate background tasks with PROCESSING grace period.
+        _shutdown_children(session, logger, print_summary=True, logout=True)
+        logger.info("Parent process exiting after background shutdown.")
         os._exit(0)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C).")
         print("\nExiting.")
+        _shutdown_children(session, logger, print_summary=False, logout=True)
         os._exit(0)
     except Exception:
         logger.exception("Unhandled exception in main")
+        _shutdown_children(session, logger, print_summary=False, logout=True)
         raise
 
+
+
+def _shutdown_children(session, logger, *, print_summary: bool, logout: bool) -> None:
+    """Terminate runtime/background children and optionally logout the session."""
+    if session is None:
+        return
+    try:
+        from autoIkabot.modules.autoLoader import record_shutdown_restore_states
+        from autoIkabot.ui.menu import get_runtime_child_pids
+        from autoIkabot.utils.process import terminate_background_tasks
+
+        record_shutdown_restore_states(session)
+
+        summary = terminate_background_tasks(
+            session,
+            runtime_pids=get_runtime_child_pids(),
+            processing_grace_seconds=120,
+        )
+        if print_summary and summary.get("total", 0):
+            print(
+                f"\n  Shutdown: stopped {summary['total']} task(s) "
+                f"(processing: {summary['processing']}, force-killed: {summary['force_killed']})."
+            )
+    except Exception:
+        logger.exception("Background shutdown cleanup failed")
+    if logout:
+        try:
+            session.logout()
+        except Exception:
+            logger.exception("Session logout during shutdown failed")
 
 def _update_cached_tokens(account_info, login_result, logger):
     """Save updated gf_token and blackbox_token back to encrypted storage.
