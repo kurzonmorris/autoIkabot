@@ -1298,3 +1298,29 @@ def test_task_status_extract_last_error_from_broken_status():
     assert task_status_mod._extract_last_error("[BROKEN] GET_RETRY_EXHAUSTED: timeout") == "GET_RETRY_EXHAUSTED: timeout"
     assert task_status_mod._extract_last_error("[BROKEN]") == "-"
     assert task_status_mod._extract_last_error("") == "-"
+
+
+
+def test_record_shutdown_restore_states_marks_missing_as_stopped(monkeypatch):
+    cfg_data = {
+        "configs": [
+            {
+                "module_name": "GoneMod",
+                "enabled": True,
+                "last_shutdown_restore": True,
+                "last_shutdown_health": "RUNNING",
+            }
+        ]
+    }
+
+    monkeypatch.setattr(autoLoader, "_load_autoload_configs", lambda session: cfg_data)
+    saved = {"called": False}
+    monkeypatch.setattr(autoLoader, "_save_autoload_configs", lambda *_args, **_kwargs: saved.__setitem__("called", True))
+    monkeypatch.setattr(process, "update_process_list", lambda _session: [])
+
+    autoLoader.record_shutdown_restore_states(session=object())
+
+    cfg = cfg_data["configs"][0]
+    assert cfg["last_shutdown_restore"] is False
+    assert cfg["last_shutdown_health"] == "STOPPED"
+    assert saved["called"] is True

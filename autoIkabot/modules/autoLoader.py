@@ -98,20 +98,20 @@ def record_shutdown_restore_states(session) -> None:
         if not module_name:
             continue
         matches = [p for p in process_list if p.get("action") == module_name]
-        if not matches:
-            continue
 
-        healths = [get_process_health(p) for p in matches]
-        restorable = any(h in RESTORE_HEALTH_STATES for h in healths)
-
-        if restorable:
-            if cfg.get("last_shutdown_health") != "RUNNING":
-                cfg["last_shutdown_health"] = "RUNNING"
-                changed = True
+        if matches:
+            healths = [get_process_health(p) for p in matches]
+            restorable = any(h in RESTORE_HEALTH_STATES for h in healths)
+            health_value = "RUNNING" if restorable else healths[0]
         else:
-            if cfg.get("last_shutdown_health") != healths[0]:
-                cfg["last_shutdown_health"] = healths[0]
-                changed = True
+            # Nothing matching at shutdown boundary means this config was not
+            # actively running/paused when we exited, so do not auto-restore.
+            restorable = False
+            health_value = "STOPPED"
+
+        if cfg.get("last_shutdown_health") != health_value:
+            cfg["last_shutdown_health"] = health_value
+            changed = True
 
         if cfg.get("last_shutdown_restore") != restorable:
             cfg["last_shutdown_restore"] = restorable
