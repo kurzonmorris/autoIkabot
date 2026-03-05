@@ -389,7 +389,7 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         "pid": process.pid,
         "action": mod["name"],
         "date": time.time(),
-        "status": "configuring",
+        "status": "[PROCESSING] configuring startup",
         "last_heartbeat": time.time(),
     }
     update_process_list(session, new_processes=[process_entry])
@@ -521,7 +521,7 @@ def dispatch_module_auto(
         "pid": process.pid,
         "action": mod["name"],
         "date": time.time(),
-        "status": "auto-loaded",
+        "status": "[PROCESSING] autoload configuring",
         "last_heartbeat": time.time(),
     }
     update_process_list(session, new_processes=[process_entry])

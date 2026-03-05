@@ -1666,3 +1666,108 @@ def test_dispatch_module_auto_spawn_failure_reports_critical(monkeypatch):
 
     assert result is False
     assert reports and reports[-1][2].startswith("BG_AUTOLOAD_SPAWN_FAIL:")
+
+
+
+def test_dispatch_background_initial_status_uses_processing_prefix(monkeypatch):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return True
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 991
+            self.exitcode = 0
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            return None
+
+    captured = {}
+
+    def fake_update(_session, new_processes=None):
+        captured["entry"] = new_processes[0]
+        return []
+
+    monkeypatch.setattr(menu, "update_process_list", fake_update)
+    monkeypatch.setattr(menu, "update_process_status_for_pid", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgCfg", "func": lambda *_: None, "background": True},
+    )
+
+    assert captured["entry"]["status"].startswith("[PROCESSING]")
+
+
+def test_dispatch_module_auto_initial_status_uses_processing_prefix(monkeypatch):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return True
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 992
+            self.exitcode = 0
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            return None
+
+    captured = {}
+
+    def fake_update(_session, new_processes=None):
+        captured["entry"] = new_processes[0]
+        return []
+
+    monkeypatch.setattr(menu, "update_process_list", fake_update)
+    monkeypatch.setattr(menu, "update_process_status_for_pid", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+
+    ok = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "AutoCfg", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    assert ok is True
+    assert captured["entry"]["status"].startswith("[PROCESSING]")
