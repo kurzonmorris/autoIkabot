@@ -1631,7 +1631,7 @@ def test_dispatch_background_spawn_failure_reports_critical(monkeypatch, capsys)
     assert reports and reports[-1][2].startswith("BG_START_SPAWN_FAIL:")
 
 
-def test_dispatch_module_auto_spawn_failure_reports_critical(monkeypatch):
+def test_dispatch_module_auto_spawn_failure_reports_critical(monkeypatch, capsys):
     class FakeSession:
         def to_dict(self):
             return {"username": "u", "mundo": "1", "servidor": "en"}
@@ -1664,7 +1664,9 @@ def test_dispatch_module_auto_spawn_failure_reports_critical(monkeypatch):
         [],
     )
 
+    out = capsys.readouterr().out
     assert result is False
+    assert "BG_AUTOLOAD_SPAWN_FAIL" in out
     assert reports and reports[-1][2].startswith("BG_AUTOLOAD_SPAWN_FAIL:")
 
 
@@ -1771,3 +1773,55 @@ def test_dispatch_module_auto_initial_status_uses_processing_prefix(monkeypatch)
 
     assert ok is True
     assert captured["entry"]["status"].startswith("[PROCESSING]")
+
+
+
+def test_dispatch_module_auto_escape_prints_compact_notice(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            self.first = True
+
+        def get_nowait(self):
+            if self.first:
+                self.first = False
+                return "escaped"
+            raise Exception("empty")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 993
+            self.exitcode = 0
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            raise AssertionError("should not terminate escaped startup")
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu, "update_process_status_for_pid", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+
+    ok = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "AutoEsc", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    out = capsys.readouterr().out
+    assert ok is False
+    assert "BG_AUTOLOAD_ESCAPED" in out

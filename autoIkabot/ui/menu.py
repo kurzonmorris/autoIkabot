@@ -44,6 +44,9 @@ SECTION_ORDER = [
     "Spy/Monitoring",
 ]
 
+STARTUP_CONFIG_TIMEOUT_SECONDS = 120
+STARTUP_WAIT_POLL_SECONDS = 0.25
+
 
 def register_module(
     name: str,
@@ -400,7 +403,7 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
     )
 
     # Deadlock-safe wait: unblock if child dies or config exceeds timeout.
-    config_timeout = 120
+    config_timeout = STARTUP_CONFIG_TIMEOUT_SECONDS
     start = time.time()
     while True:
         child_state = None
@@ -427,7 +430,7 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
                     pass
             break
 
-        if event.wait(timeout=0.25):
+        if event.wait(timeout=STARTUP_WAIT_POLL_SECONDS):
             logger.info("Background module '%s' config complete, returning to menu", mod["name"])
             _safe_update_child_status(session, process.pid, "[WAITING] module started")
             break
@@ -440,7 +443,7 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
             _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_FAIL: {detail}")
             break
         if (time.time() - start) > config_timeout:
-            detail = f"{mod['name']} config exceeded 120s"
+            detail = f"{mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s"
             print(f"\n  BG_START_TIMEOUT: {detail}. Returning to menu.")
             logger.warning("Background module '%s' config timed out, terminating", mod["name"])
             _report_startup_failure(session, mod["name"], "BG_START_TIMEOUT", detail)
@@ -502,6 +505,7 @@ def dispatch_module_auto(
         process.start()
     except Exception as exc:
         logger.exception("Auto-load of '%s' failed to spawn child process", mod["name"])
+        print(f"  BG_AUTOLOAD_SPAWN_FAIL: {mod['name']} could not spawn child process ({exc}).")
         _report_startup_failure(
             session,
             mod["name"],
@@ -542,10 +546,12 @@ def dispatch_module_auto(
 
         if child_state == "escaped":
             logger.info("Auto-load of '%s' escaped during config", mod["name"])
+            print(f"  BG_AUTOLOAD_ESCAPED: {mod['name']} escaped during startup.")
             _safe_update_child_status(session, process.pid, "[PAUSED] autoload escaped")
             return False
         if child_state == "crashed":
             logger.warning("Auto-load of '%s' crashed during config", mod["name"])
+            print(f"  BG_AUTOLOAD_CRASH: {mod['name']} crashed during startup.")
             _report_startup_failure(
                 session,
                 mod["name"],
@@ -560,7 +566,7 @@ def dispatch_module_auto(
                     pass
             return False
 
-        if event.wait(timeout=0.25):
+        if event.wait(timeout=STARTUP_WAIT_POLL_SECONDS):
             _safe_update_child_status(session, process.pid, "[WAITING] auto-loaded module started")
             break
 
@@ -569,6 +575,7 @@ def dispatch_module_auto(
                 "Auto-load of '%s' exited during config (exitcode=%s)",
                 mod["name"], process.exitcode,
             )
+            print(f"  BG_AUTOLOAD_FAIL: {mod['name']} exited during startup (code {process.exitcode}).")
             _report_startup_failure(
                 session,
                 mod["name"],
@@ -578,16 +585,16 @@ def dispatch_module_auto(
             _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_FAIL: {mod['name']} exited during startup (code {process.exitcode})")
             return False
 
-        if (time.time() - start) > 120:
+        if (time.time() - start) > STARTUP_CONFIG_TIMEOUT_SECONDS:
             logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
-            print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s.")
+            print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s.")
             _report_startup_failure(
                 session,
                 mod["name"],
                 "BG_AUTOLOAD_TIMEOUT",
-                f"{mod['name']} config exceeded 120s",
+                f"{mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s",
             )
-            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s")
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s")
             try:
                 process.terminate()
             except Exception:
