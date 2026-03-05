@@ -1324,3 +1324,16 @@ def test_record_shutdown_restore_states_marks_missing_as_stopped(monkeypatch):
     assert cfg["last_shutdown_restore"] is False
     assert cfg["last_shutdown_health"] == "STOPPED"
     assert saved["called"] is True
+
+
+
+def test_format_critical_error_line_preserves_code_and_detail():
+    err = {"module": "Session", "pid": 99, "message": "GET_RETRY_EXHAUSTED: timeout"}
+    line = menu._format_critical_error_line(err)
+    assert line == "Session (PID 99) - GET_RETRY_EXHAUSTED: timeout"
+
+
+def test_format_critical_error_line_falls_back_to_unknown_code():
+    err = {"module": "ModA", "pid": 12, "message": "plain message"}
+    line = menu._format_critical_error_line(err)
+    assert line == "ModA (PID 12) - BG_UNKNOWN: plain message"

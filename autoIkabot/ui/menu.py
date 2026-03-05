@@ -170,6 +170,27 @@ def _render_menu(session) -> Dict[int, Dict]:
     return action_map
 
 
+def _format_critical_error_line(err: Dict[str, Any]) -> str:
+    """Render a compact one-line critical error summary for menu display."""
+    module = str(err.get("module", "Unknown"))
+    pid = err.get("pid", "?")
+    message = str(err.get("message", "")).strip().replace("\n", " | ")
+
+    if not message:
+        return f"{module} (PID {pid}) - BG_UNKNOWN: no details"
+
+    # Preserve explicit CODE: detail shape when present; otherwise add generic code.
+    if ":" in message:
+        head, tail = message.split(":", 1)
+        code = head.strip() or "BG_UNKNOWN"
+        detail = tail.strip() or "no details"
+    else:
+        code = "BG_UNKNOWN"
+        detail = message
+
+    return f"{module} (PID {pid}) - {code}: {detail}"
+
+
 # ---------------------------------------------------------------------------
 # Menu loop
 # ---------------------------------------------------------------------------
@@ -196,11 +217,11 @@ def run_menu(session) -> None:
             print("!" * 55)
             print()
             for err in errors:
-                print(f"  Module: {err.get('module', 'Unknown')}")
-                print(f"  PID:    {err.get('pid', '?')}")
-                for line in err.get("message", "").splitlines():
-                    print(f"    {line}")
-                print()
+                compact = _format_critical_error_line(err)
+                if len(compact) > 110:
+                    compact = compact[:107] + "..."
+                print(f"  {compact}")
+            print()
             enter()
 
         action_map = _render_menu(session)
