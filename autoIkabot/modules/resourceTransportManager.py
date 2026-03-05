@@ -30,6 +30,7 @@ from autoIkabot.notifications.notify import checkTelegramData, sendToBot
 from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import report_critical_error, sleep_with_heartbeat
+from autoIkabot.web.session import SessionBrokenError
 
 logger = get_logger(__name__)
 
@@ -232,6 +233,11 @@ def resourceTransportManager(session, event, stdin_fd):
                 break  # clean exit (one-time shipment finished)
             except KeyboardInterrupt:
                 raise
+            except SessionBrokenError as e:
+                msg = f"[BROKEN] Resource Transport Manager stopped: {e}"
+                logger.error(msg)
+                report_critical_error(session, MODULE_NAME, msg)
+                break
             except Exception:
                 restart_count += 1
                 tb = traceback.format_exc()
