@@ -25,7 +25,7 @@ from autoIkabot.helpers.game_parser import (
     getIsland,
     getIslandsIds,
 )
-from autoIkabot.ui.prompts import banner, enter, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import (
     report_critical_error,
@@ -435,7 +435,7 @@ def activateMiracle(session, event, stdin_fd):
                     try:
                         print("How many extra times? (enter 0 for indefinitely until killed)")
                         extra = read(msg="Times: ", digit=True, min=0)
-                    except KeyboardInterrupt:
+                    except (KeyboardInterrupt, ReturnToMainMenu):
                         iterations = 1
                         break
 
@@ -457,7 +457,7 @@ def activateMiracle(session, event, stdin_fd):
 
                     try:
                         proceed = read(values=["y", "Y", "n", "N", ""])
-                    except KeyboardInterrupt:
+                    except (KeyboardInterrupt, ReturnToMainMenu):
                         iterations = 1
                         break
 
@@ -466,6 +466,9 @@ def activateMiracle(session, event, stdin_fd):
                         banner()
                         continue
                 break
+    except ReturnToMainMenu:
+        event.set()
+        return
     except KeyboardInterrupt:
         event.set()
         return

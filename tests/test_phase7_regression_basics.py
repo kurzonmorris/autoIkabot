@@ -14,6 +14,8 @@ from autoIkabot.ui import menu
 from autoIkabot.modules import autoLoader
 from autoIkabot.modules import taskStatus as task_status_mod
 import autoIkabot.modules.resourceTransportManager as rtm_mod
+import autoIkabot.modules.constructionManager as cm_mod
+import autoIkabot.modules.activateMiracle as am_mod
 from autoIkabot.utils import process
 from autoIkabot.web.session import Session, SessionBrokenError
 
@@ -1895,3 +1897,39 @@ def test_rtm_config_modes_return_none_on_global_escape(monkeypatch):
     assert rtm_mod.distributeMode(session=object(), telegram_enabled=False) is None
     assert rtm_mod.evenDistributionMode(session=object(), telegram_enabled=False) is None
     assert rtm_mod.autoSendMode(session=object(), telegram_enabled=False) is None
+
+
+
+def test_construction_manager_escape_sets_event(monkeypatch):
+    class FakeEvent:
+        def __init__(self):
+            self.called = 0
+
+        def set(self):
+            self.called += 1
+
+    monkeypatch.setattr(cm_mod.os, "fdopen", lambda _fd: __import__("io").StringIO(""))
+    monkeypatch.setattr(cm_mod, "chooseCity", lambda _session: (_ for _ in ()).throw(ReturnToMainMenu()))
+
+    fake_event = FakeEvent()
+    cm_mod.constructionManager(session=object(), event=fake_event, stdin_fd=0)
+
+    assert fake_event.called == 1
+
+
+def test_activate_miracle_escape_sets_event(monkeypatch):
+    class FakeEvent:
+        def __init__(self):
+            self.called = 0
+
+        def set(self):
+            self.called += 1
+
+    monkeypatch.setattr(am_mod.os, "fdopen", lambda _fd: __import__("io").StringIO(""))
+    monkeypatch.setattr(am_mod, "obtainMiraclesAvailable", lambda _session: [{"wonderName": "X", "available": True}])
+    monkeypatch.setattr(am_mod, "chooseIsland", lambda _islands: (_ for _ in ()).throw(ReturnToMainMenu()))
+
+    fake_event = FakeEvent()
+    am_mod.activateMiracle(session=object(), event=fake_event, stdin_fd=0)
+
+    assert fake_event.called == 1

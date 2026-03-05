@@ -51,7 +51,7 @@ from autoIkabot.modules.resourceTransportManager import (
     acquire_shipping_lock,
     release_shipping_lock,
 )
-from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import (
     report_critical_error,
@@ -1268,6 +1268,9 @@ def constructionManager(session, event, stdin_fd):
                 event.set()
                 return
 
+    except ReturnToMainMenu:
+        event.set()
+        return
     except KeyboardInterrupt:
         event.set()
         return
