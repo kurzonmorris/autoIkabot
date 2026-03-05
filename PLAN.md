@@ -2,6 +2,9 @@
 
 This document is the master plan for the autoIkabot project. Before each coding session we will review it, discuss foreseeable issues, and agree on what to tackle next. **No code will be written without explicit approval.**
 
+> **Phase 6 alignment note:** The operational source of truth for runtime behavior is now `OPERATIONAL_CONTRACT.md`.
+> If any legacy section in this plan conflicts with current lifecycle/state/session behavior, follow `OPERATIONAL_CONTRACT.md` first.
+
 ---
 
 ## Phase 1: Foundation & Account Management

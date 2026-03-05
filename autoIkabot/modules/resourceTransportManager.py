@@ -27,9 +27,10 @@ from autoIkabot.helpers.naval import (
 )
 from autoIkabot.helpers.routing import executeRoutes
 from autoIkabot.notifications.notify import checkTelegramData, sendToBot
-from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import report_critical_error, sleep_with_heartbeat
+from autoIkabot.web.session import SessionBrokenError
 
 logger = get_logger(__name__)
 
@@ -68,8 +69,34 @@ def get_lock_file_path(session, use_freighters=False):
     return os.path.join(os.path.expanduser("~"), lock_filename)
 
 
-def acquire_shipping_lock(session, use_freighters=False, timeout=300):
-    """Try to acquire shipping lock, wait up to timeout seconds."""
+
+
+def _describe_lock_holder(session, use_freighters=False):
+    """Return human-readable current lock holder diagnostics."""
+    lock_file = get_lock_file_path(session, use_freighters)
+    if not os.path.exists(lock_file):
+        return None
+    try:
+        with open(lock_file, 'r') as f:
+            lock_data = json.load(f)
+        age = max(0, int(time.time() - float(lock_data.get('timestamp', time.time()))))
+        return (
+            f"pid={lock_data.get('pid', '?')} "
+            f"user={lock_data.get('username', '?')} "
+            f"age={age}s"
+        )
+    except Exception:
+        return "unreadable-lock"
+
+
+def acquire_shipping_lock(session, use_freighters=False, timeout=300, wait_context=None):
+    """Try to acquire shipping lock, wait up to timeout seconds.
+
+    Parameters
+    ----------
+    wait_context : str | None
+        Optional context shown in status while waiting for lock.
+    """
     lock_file = get_lock_file_path(session, use_freighters)
     start_time = time.time()
 
@@ -102,7 +129,11 @@ def acquire_shipping_lock(session, use_freighters=False, timeout=300):
         except Exception:
             pass
 
-        time.sleep(5)  # Lock polling is short enough to not stall heartbeat
+        if wait_context:
+            holder = _describe_lock_holder(session, use_freighters=use_freighters)
+            holder_txt = f" | holder {holder}" if holder else ""
+            session.setStatus(f"[WAITING] {wait_context} | waiting for shipping lock{holder_txt}")
+        sleep_with_heartbeat(session, 5, interval=5)
 
     return False
 
@@ -232,6 +263,11 @@ def resourceTransportManager(session, event, stdin_fd):
                 break  # clean exit (one-time shipment finished)
             except KeyboardInterrupt:
                 raise
+            except SessionBrokenError as e:
+                msg = f"[BROKEN] Resource Transport Manager stopped: {e}"
+                logger.error(msg)
+                report_critical_error(session, MODULE_NAME, msg)
+                break
             except Exception:
                 restart_count += 1
                 tb = traceback.format_exc()
@@ -260,6 +296,9 @@ def resourceTransportManager(session, event, stdin_fd):
                 logger.info("Auto-restarting in %d seconds...", wait_seconds)
                 sleep_with_heartbeat(session, wait_seconds)
 
+    except ReturnToMainMenu:
+        event.set()
+        return
     except KeyboardInterrupt:
         event.set()
         return
@@ -696,6 +735,8 @@ def consolidateMode(session, telegram_enabled):
 
         enter()
 
+    except ReturnToMainMenu:
+        return
     except KeyboardInterrupt:
         return
 
@@ -888,6 +929,8 @@ def distributeMode(session, telegram_enabled):
 
         enter()
 
+    except ReturnToMainMenu:
+        return
     except KeyboardInterrupt:
         return
 
@@ -955,6 +998,8 @@ def evenDistributionMode(session, telegram_enabled):
         if rta.lower() == "n":
             return
 
+    except ReturnToMainMenu:
+        return
     except KeyboardInterrupt:
         return
 
@@ -1188,6 +1233,8 @@ def autoSendMode(session, telegram_enabled):
                     }
             # If we broke out of inner loop (restart/edit), continue outer while True
 
+    except ReturnToMainMenu:
+        return
     except KeyboardInterrupt:
         return
 
@@ -1379,7 +1426,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
                 break
             print(f"    Waiting for {ship_type_name}... (checked for {elapsed}s)")
             session.setStatus(
-                f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for {ship_type_name} ({elapsed}s)..."
+                f"[WAITING] Auto Send [{route_index + 1}/{total_routes}] | Waiting for {ship_type_name} ({elapsed}s)..."
             )
             sleep_with_heartbeat(session, 120)
 
@@ -1398,9 +1445,9 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
         while retry_count < max_retries and not lock_acquired:
             print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
             session.setStatus(
-                f"Auto Send [{route_index + 1}/{total_routes}] | Waiting for shipping lock..."
+                f"[WAITING] Auto Send [{route_index + 1}/{total_routes}] | Waiting for shipping lock..."
             )
-            if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
+            if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300, wait_context=f"Auto Send [{route_index + 1}/{total_routes}]"):
                 lock_acquired = True
                 print(f"    Lock acquired.")
             else:
@@ -1479,7 +1526,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
             release_shipping_lock(session, use_freighters=useFreighters)
 
     print(f"\n--- Auto Send complete: {completed}/{total_routes} shipments sent ---")
-    session.setStatus(f"Auto Send complete: {completed}/{total_routes} to {destination_city['name']}")
+    session.setStatus(f"[WAITING] Auto Send complete: {completed}/{total_routes} to {destination_city['name']}")
 
 
 def do_it(session, origin_cities, destination_city, island, interval_hours, resource_config, useFreighters, send_mode, telegram_enabled, notify_on_start):
@@ -1620,10 +1667,10 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                 while retry_count < max_retries and not lock_acquired:
                     print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
                     session.setStatus(
-                        f"{origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
+                        f"[WAITING] {origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
                     )
 
-                    if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
+                    if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300, wait_context=f"{origin_city['name']} -> {destination_city['name']}"):
                         lock_acquired = True
                         print(f"    Lock acquired.")
                     else:
@@ -1644,7 +1691,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         )
 
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Sending resources..."
+                            f"[PROCESSING] {origin_city['name']} -> {destination_city['name']} | Sending resources..."
                         )
 
                         if useFreighters:
@@ -1848,10 +1895,10 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                 while retry_count < max_retries and not lock_acquired:
                     print(f"    Acquiring shipping lock (attempt {retry_count + 1}/{max_retries})...")
                     session.setStatus(
-                        f"{origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
+                        f"[WAITING] {origin_city['name']} -> {destination_city['name']} | Waiting for shipping lock (attempt {retry_count + 1}/{max_retries})..."
                     )
 
-                    if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300):
+                    if acquire_shipping_lock(session, use_freighters=useFreighters, timeout=300, wait_context=f"{origin_city['name']} -> {destination_city['name']}"):
                         lock_acquired = True
                         print(f"    Lock acquired.")
                     else:
@@ -1872,7 +1919,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         )
 
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Sending resources..."
+                            f"[PROCESSING] {origin_city['name']} -> {destination_city['name']} | Sending resources..."
                         )
 
                         if useFreighters:
