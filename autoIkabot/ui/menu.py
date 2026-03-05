@@ -372,7 +372,15 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         args=(mod["func"], session_data, event, stdin_fd, startup_state, recording),
         name=mod["name"],
     )
-    process.start()
+    try:
+        process.start()
+    except Exception as exc:
+        detail = f"{mod['name']} could not spawn child process ({exc})"
+        print(f"\n  BG_START_SPAWN_FAIL: {detail}.")
+        logger.exception("Background module '%s' failed to start child process", mod["name"])
+        _report_startup_failure(session, mod["name"], "BG_START_SPAWN_FAIL", detail)
+        return
+
     if process.pid:
         _RUNTIME_CHILD_PIDS.add(process.pid)
 
@@ -490,7 +498,19 @@ def dispatch_module_auto(
         args=(mod["func"], session_data, event, stdin_fd, startup_state),
         name=f"AutoLoad-{mod['name']}",
     )
-    process.start()
+    try:
+        process.start()
+    except Exception as exc:
+        logger.exception("Auto-load of '%s' failed to spawn child process", mod["name"])
+        _report_startup_failure(
+            session,
+            mod["name"],
+            "BG_AUTOLOAD_SPAWN_FAIL",
+            f"{mod['name']} could not spawn child process ({exc})",
+        )
+        set_predetermined_input([])
+        return False
+
     if process.pid:
         _RUNTIME_CHILD_PIDS.add(process.pid)
 

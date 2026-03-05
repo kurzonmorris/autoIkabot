@@ -1591,3 +1591,78 @@ def test_update_process_status_for_pid_noop_when_pid_missing(tmp_path, monkeypat
     process.update_process_status_for_pid(session=object(), pid=99, status="[BROKEN] nope")
 
     assert json.loads(target.read_text()) == original
+
+
+
+def test_dispatch_background_spawn_failure_reports_critical(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = None
+
+        def start(self):
+            raise OSError("no fork")
+
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgSpawn", "func": lambda *_: None, "background": True},
+    )
+
+    out = capsys.readouterr().out
+    assert "BG_START_SPAWN_FAIL" in out
+    assert reports and reports[-1][2].startswith("BG_START_SPAWN_FAIL:")
+
+
+def test_dispatch_module_auto_spawn_failure_reports_critical(monkeypatch):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = None
+
+        def start(self):
+            raise OSError("no fork")
+
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    result = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "AutoSpawn", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    assert result is False
+    assert reports and reports[-1][2].startswith("BG_AUTOLOAD_SPAWN_FAIL:")
