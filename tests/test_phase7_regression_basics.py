@@ -12,6 +12,7 @@ from autoIkabot.ui.prompts import ReturnToMainMenu, read, read_input
 import autoIkabot.ui.prompts as prompts
 from autoIkabot.ui import menu
 from autoIkabot.modules import autoLoader
+from autoIkabot.modules import taskStatus as task_status_mod
 from autoIkabot.utils import process
 from autoIkabot.web.session import Session, SessionBrokenError
 
@@ -1284,3 +1285,16 @@ def test_launch_saved_configs_respects_last_shutdown_restore_flag(monkeypatch):
     autoLoader.launch_saved_configs(session=object())
 
     assert launched == [("RestoreMe", ["a"])]
+
+
+
+def test_task_status_format_heartbeat_age_handles_legacy_and_seconds(monkeypatch):
+    now = 1_000.0
+    assert task_status_mod._format_heartbeat_age(now, {}) == "legacy"
+    assert task_status_mod._format_heartbeat_age(now, {"last_heartbeat": 995.0}) == "5s"
+
+
+def test_task_status_extract_last_error_from_broken_status():
+    assert task_status_mod._extract_last_error("[BROKEN] GET_RETRY_EXHAUSTED: timeout") == "GET_RETRY_EXHAUSTED: timeout"
+    assert task_status_mod._extract_last_error("[BROKEN]") == "-"
+    assert task_status_mod._extract_last_error("") == "-"

@@ -38,6 +38,29 @@ def _format_duration(seconds: float) -> str:
     return f"{days}d {remaining_hours}h"
 
 
+
+
+def _format_heartbeat_age(now: float, entry: dict) -> str:
+    """Return human-readable heartbeat age for a process entry."""
+    last_hb = entry.get("last_heartbeat")
+    if last_hb is None:
+        return "legacy"
+    age = max(0.0, now - float(last_hb))
+    return _format_duration(age)
+
+
+def _extract_last_error(status: str) -> str:
+    """Extract compact error text from a BROKEN status line."""
+    if not status:
+        return "-"
+    raw = str(status).strip()
+    up = raw.upper()
+    marker = "[BROKEN]"
+    if marker in up:
+        idx = up.find(marker)
+        raw = raw[idx + len(marker):].strip()
+    return raw or "-"
+
 def _get_autoload_config_for(session, module_name: str):
     """Find an enabled autoLoader config matching the given module name.
 
@@ -150,12 +173,12 @@ def taskStatus(session) -> None:
         print("  " + "=" * 50)
         print()
         print(
-            f"  {'#':>3}  {'PID':>7}  {'Task':<25}"
-            f"  {'Health':<8}  {'Uptime':<10}  Status"
+            f"  {'#':>3}  {'PID':>7}  {'Task':<22}"
+            f"  {'Health':<10}  {'HB Age':<8}  {'Uptime':<9}  Detail"
         )
         print(
-            f"  {'---':>3}  {'-------':>7}  {'-' * 25}"
-            f"  {'-' * 8}  {'-' * 10}  {'-' * 30}"
+            f"  {'---':>3}  {'-------':>7}  {'-' * 22}"
+            f"  {'-' * 10}  {'-' * 8}  {'-' * 9}  {'-' * 34}"
         )
 
         for i, proc in enumerate(process_list):
@@ -172,18 +195,19 @@ def taskStatus(session) -> None:
             else:
                 healthy_count += 1
 
-            # Uptime
+            # Uptime + heartbeat age
             start_time = proc.get("date")
             uptime = _format_duration(now - start_time) if start_time else "?"
+            hb_age = _format_heartbeat_age(now, proc)
 
-            # Status message
             status = proc.get("status", "running")
-            if len(status) > 30:
-                status = status[:27] + "..."
+            detail = _extract_last_error(status) if health == "BROKEN" else status
+            if len(detail) > 34:
+                detail = detail[:31] + "..."
 
             print(
-                f"  {i + 1:>3}  {proc['pid']:>7}  {proc.get('action', '?'):<25}"
-                f"  {health:<8}  {uptime:<10}  {status}"
+                f"  {i + 1:>3}  {proc['pid']:>7}  {proc.get('action', '?'):<22}"
+                f"  {health:<10}  {hb_age:<8}  {uptime:<9}  {detail}"
             )
 
         total = len(process_list)
