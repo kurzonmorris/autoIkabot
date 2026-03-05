@@ -763,9 +763,14 @@ def _execute_transport(session, transport_plan):
     lock_acquired = False
     for attempt in range(1, max_retries + 1):
         session.setStatus(
-            "Acquiring shipping lock (attempt {}/{})...".format(attempt, max_retries)
+            "[WAITING] Acquiring shipping lock (attempt {}/{})...".format(attempt, max_retries)
         )
-        if acquire_shipping_lock(session, use_freighters=use_freighters, timeout=300):
+        if acquire_shipping_lock(
+            session,
+            use_freighters=use_freighters,
+            timeout=300,
+            wait_context="Construction transport",
+        ):
             lock_acquired = True
             break
         logger.warning(
@@ -784,18 +789,18 @@ def _execute_transport(session, transport_plan):
 
     try:
         # Verify at least one ship is available before starting routes
-        session.setStatus("Checking ship availability...")
+        session.setStatus("[WAITING] Checking ship availability...")
         getter = getAvailableFreighters if use_freighters else getAvailableShips
         ships = getter(session)
         if ships == 0:
-            session.setStatus("Waiting for ships to become available...")
+            session.setStatus("[WAITING] Waiting for ships to become available...")
             ships = waitForArrival(session, useFreighters=use_freighters)
 
         logger.info(
             "Starting transport: %d route(s), %d ship(s) available",
             len(routes), ships,
         )
-        session.setStatus("Transporting resources for construction...")
+        session.setStatus("[PROCESSING] Transporting resources for construction...")
         executeRoutes(session, routes, useFreighters=use_freighters)
     except Exception as e:
         logger.error("Transport error: %s", e)

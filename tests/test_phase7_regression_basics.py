@@ -1933,3 +1933,49 @@ def test_activate_miracle_escape_sets_event(monkeypatch):
     am_mod.activateMiracle(session=object(), event=fake_event, stdin_fd=0)
 
     assert fake_event.called == 1
+
+
+
+def test_construction_execute_transport_passes_lock_wait_context(monkeypatch):
+    routes = [({"name": "A"}, {"name": "B"}, "i", 1, 0, 0, 0, 0)]
+
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+    fake = FakeSession()
+
+    seen = {}
+
+    def fake_acquire(session, use_freighters=False, timeout=0, wait_context=None):
+        seen["wait_context"] = wait_context
+        return True
+
+    monkeypatch.setattr(cm_mod, "acquire_shipping_lock", fake_acquire)
+    monkeypatch.setattr(cm_mod, "release_shipping_lock", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cm_mod, "getAvailableShips", lambda _session: 1)
+    monkeypatch.setattr(cm_mod, "executeRoutes", lambda *args, **kwargs: None)
+
+    cm_mod._execute_transport(fake, {"routes": routes, "useFreighters": False})
+
+    assert seen["wait_context"] == "Construction transport"
+    assert any(st.startswith("[WAITING]") for st in fake.statuses)
+    assert any(st.startswith("[PROCESSING]") for st in fake.statuses)
+
+
+def test_construction_execute_transport_reports_error_when_lock_unavailable(monkeypatch):
+    class FakeSession:
+        def setStatus(self, _status):
+            return None
+
+    reports = []
+    monkeypatch.setattr(cm_mod, "acquire_shipping_lock", lambda *args, **kwargs: False)
+    monkeypatch.setattr(cm_mod, "sleep_with_heartbeat", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cm_mod, "report_critical_error", lambda *args: reports.append(args))
+
+    cm_mod._execute_transport(FakeSession(), {"routes": [], "useFreighters": False})
+
+    assert reports and "Could not acquire shipping lock" in reports[-1][2]
