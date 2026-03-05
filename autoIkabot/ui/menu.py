@@ -397,6 +397,17 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
             print("\n  Returning to main menu...")
             logger.info("Background module '%s' config escaped to menu", mod["name"])
             break
+        if child_state == "crashed":
+            detail = f"{mod['name']} crashed during startup"
+            print(f"\n  BG_START_CRASH: {detail}.")
+            logger.warning("Background module '%s' crashed during startup", mod["name"])
+            _report_startup_failure(session, mod["name"], "BG_START_CRASH", detail)
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+            break
 
         if event.wait(timeout=0.25):
             logger.info("Background module '%s' config complete, returning to menu", mod["name"])
@@ -498,6 +509,20 @@ def dispatch_module_auto(
 
         if child_state == "escaped":
             logger.info("Auto-load of '%s' escaped during config", mod["name"])
+            return False
+        if child_state == "crashed":
+            logger.warning("Auto-load of '%s' crashed during config", mod["name"])
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_CRASH",
+                f"{mod['name']} crashed during startup",
+            )
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
             return False
 
         if event.wait(timeout=0.25):

@@ -1437,3 +1437,112 @@ def test_terminate_background_tasks_ignores_current_and_invalid_pids(monkeypatch
 
     assert summary == {"total": 0, "processing": 0, "force_killed": 0}
     assert sent == []
+
+
+
+def test_dispatch_background_reports_start_crash_state(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            self.first = True
+
+        def get_nowait(self):
+            if self.first:
+                self.first = False
+                return "crashed"
+            raise Exception("empty")
+
+    terminated = {"value": False}
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 777
+            self.exitcode = 1
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            terminated["value"] = True
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    menu._dispatch_background(
+        FakeSession(),
+        {"name": "BgCrash", "func": lambda *_: None, "background": True},
+    )
+
+    out = capsys.readouterr().out
+    assert "BG_START_CRASH" in out
+    assert terminated["value"] is True
+    assert reports and reports[-1][2].startswith("BG_START_CRASH:")
+
+
+def test_dispatch_module_auto_crash_reports_critical(monkeypatch):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            self.first = True
+
+        def get_nowait(self):
+            if self.first:
+                self.first = False
+                return "crashed"
+            raise Exception("empty")
+
+    terminated = {"value": False}
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 778
+            self.exitcode = 1
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            terminated["value"] = True
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    result = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "AutoCrash", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    assert result is False
+    assert terminated["value"] is True
+    assert reports and reports[-1][2].startswith("BG_AUTOLOAD_CRASH:")
