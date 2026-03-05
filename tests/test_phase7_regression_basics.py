@@ -643,6 +643,8 @@ def test_dispatch_background_handles_child_escape(monkeypatch, capsys):
     monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
     monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
     monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
     menu._RUNTIME_CHILD_PIDS.clear()
 
     menu._dispatch_background(
@@ -700,6 +702,8 @@ def test_dispatch_background_timeout_terminates_child(monkeypatch, capsys):
         return current
 
     monkeypatch.setattr(menu.time, "time", fake_time)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
     menu._RUNTIME_CHILD_PIDS.clear()
 
     menu._dispatch_background(
@@ -710,6 +714,7 @@ def test_dispatch_background_timeout_terminates_child(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "BG_START_TIMEOUT" in out
     assert terminated["value"] is True
+    assert reports and reports[-1][2].startswith("BG_START_TIMEOUT:")
 
 
 def test_dispatch_background_reports_start_fail_when_child_dies(monkeypatch, capsys):
@@ -747,6 +752,8 @@ def test_dispatch_background_reports_start_fail_when_child_dies(monkeypatch, cap
     monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
     monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
     monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
 
     menu._dispatch_background(
         FakeSession(),
@@ -755,6 +762,7 @@ def test_dispatch_background_reports_start_fail_when_child_dies(monkeypatch, cap
 
     out = capsys.readouterr().out
     assert "BG_START_FAIL" in out
+    assert reports and reports[-1][2].startswith("BG_START_FAIL:")
 
 
 def test_read_password_non_tty_escape(monkeypatch):
@@ -1337,3 +1345,66 @@ def test_format_critical_error_line_falls_back_to_unknown_code():
     err = {"module": "ModA", "pid": 12, "message": "plain message"}
     line = menu._format_critical_error_line(err)
     assert line == "ModA (PID 12) - BG_UNKNOWN: plain message"
+
+
+
+def test_dispatch_module_auto_timeout_reports_critical(monkeypatch, capsys):
+    class FakeSession:
+        def to_dict(self):
+            return {"username": "u", "mundo": "1", "servidor": "en"}
+
+    class FakeEvent:
+        def wait(self, timeout=0):
+            return False
+
+    class FakeQueue:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_nowait(self):
+            raise Exception("empty")
+
+    terminated = {"value": False}
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.pid = 556
+            self.exitcode = None
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            terminated["value"] = True
+
+    monkeypatch.setattr(menu, "update_process_list", lambda session, new_processes=None: [])
+    monkeypatch.setattr(menu.multiprocessing, "Event", FakeEvent)
+    monkeypatch.setattr(menu.multiprocessing, "Queue", FakeQueue)
+    monkeypatch.setattr(menu.multiprocessing, "Process", FakeProcess)
+    monkeypatch.setattr(menu.sys.stdin, "fileno", lambda: 0)
+
+    clock = {"t": 0.0}
+
+    def fake_time():
+        current = clock["t"]
+        clock["t"] += 121.0
+        return current
+
+    monkeypatch.setattr(menu.time, "time", fake_time)
+    reports = []
+    monkeypatch.setattr(menu, "report_critical_error", lambda *args: reports.append(args))
+
+    result = menu.dispatch_module_auto(
+        FakeSession(),
+        {"name": "AutoSlow", "func": lambda *_: None, "background": True},
+        [],
+    )
+
+    out = capsys.readouterr().out
+    assert result is False
+    assert "BG_AUTOLOAD_TIMEOUT" in out
+    assert terminated["value"] is True
+    assert reports and reports[-1][2].startswith("BG_AUTOLOAD_TIMEOUT:")

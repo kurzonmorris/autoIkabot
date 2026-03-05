@@ -327,6 +327,15 @@ def _child_entry(func, session_data, event, stdin_fd, startup_state=None, record
             pass
 
 
+def _report_startup_failure(session, mod_name: str, code: str, detail: str) -> None:
+    """Report startup failure through critical-error channel with compact code."""
+    msg = f"{code}: {detail}"
+    try:
+        report_critical_error(session, mod_name, msg)
+    except Exception:
+        logger.exception("Failed to report startup failure for %s", mod_name)
+
+
 def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) -> None:
     """Spawn a module as a background child process.
 
@@ -394,12 +403,16 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
             break
         if not process.is_alive():
             code = process.exitcode
-            print(f"\n  BG_START_FAIL: {mod['name']} exited during startup (code {code}).")
+            detail = f"{mod['name']} exited during startup (code {code})"
+            print(f"\n  BG_START_FAIL: {detail}.")
             logger.warning("Background module '%s' died during config (exitcode=%s)", mod["name"], code)
+            _report_startup_failure(session, mod["name"], "BG_START_FAIL", detail)
             break
         if (time.time() - start) > config_timeout:
-            print(f"\n  BG_START_TIMEOUT: {mod['name']} config exceeded 120s. Returning to menu.")
+            detail = f"{mod['name']} config exceeded 120s"
+            print(f"\n  BG_START_TIMEOUT: {detail}. Returning to menu.")
             logger.warning("Background module '%s' config timed out, terminating", mod["name"])
+            _report_startup_failure(session, mod["name"], "BG_START_TIMEOUT", detail)
             try:
                 process.terminate()
             except Exception:
@@ -495,11 +508,23 @@ def dispatch_module_auto(
                 "Auto-load of '%s' exited during config (exitcode=%s)",
                 mod["name"], process.exitcode,
             )
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_FAIL",
+                f"{mod['name']} exited during startup (code {process.exitcode})",
+            )
             return False
 
         if (time.time() - start) > 120:
             logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
             print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s.")
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_TIMEOUT",
+                f"{mod['name']} config exceeded 120s",
+            )
             try:
                 process.terminate()
             except Exception:
