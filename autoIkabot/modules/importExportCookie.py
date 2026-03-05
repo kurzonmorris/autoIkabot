@@ -51,10 +51,8 @@ def importExportCookie(session) -> None:
 def _import_cookie(session) -> None:
     """Import an ikariam cookie from user input."""
     banner()
-    print(
-        "{}⚠️ INSERTING AN INVALID COOKIE WILL LOG YOU OUT OF YOUR "
-        "OTHER SESSIONS ⚠️{}\n\n".format(_WARNING, _ENDC)
-    )
+    print("{}⚠️ COOKIE WARNING:{} Full account-access token.".format(_WARNING, _ENDC))
+    print("  Invalid cookie can invalidate other active sessions.\n")
     print("Go ahead and export the cookie from another ikabot instance now and then")
     print('type your "ikariam" cookie below:')
     newcookie = read()
