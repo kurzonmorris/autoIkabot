@@ -270,6 +270,40 @@ def update_process_status(session, status: str) -> None:
         logger.warning("Could not update process status due to lock timeout")
 
 
+def update_process_status_for_pid(session, pid: int, status: str) -> None:
+    """Update the status field for a specific PID in the process list."""
+    filepath = _get_process_file_path(session)
+
+    try:
+        with _file_lock(filepath):
+            try:
+                with open(filepath, "r") as f:
+                    process_list = json.load(f)
+            except (json.JSONDecodeError, IOError, FileNotFoundError):
+                return
+
+            updated = False
+            for entry in process_list:
+                if entry.get("pid") == pid:
+                    entry["status"] = status
+                    entry["last_heartbeat"] = time.time()
+                    updated = True
+                    break
+
+            if not updated:
+                return
+
+            tmp_path = filepath + ".tmp"
+            try:
+                with open(tmp_path, "w") as f:
+                    json.dump(process_list, f, indent=2)
+                os.replace(tmp_path, filepath)
+            except IOError:
+                pass
+    except TimeoutError:
+        logger.warning("Could not update process status for PID %s due to lock timeout", pid)
+
+
 # ---------------------------------------------------------------------------
 # Critical error reporting (child -> parent)
 # ---------------------------------------------------------------------------

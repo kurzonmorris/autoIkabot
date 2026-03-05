@@ -1546,3 +1546,48 @@ def test_dispatch_module_auto_crash_reports_critical(monkeypatch):
     assert result is False
     assert terminated["value"] is True
     assert reports and reports[-1][2].startswith("BG_AUTOLOAD_CRASH:")
+
+
+
+def test_update_process_status_for_pid_updates_target_and_heartbeat(tmp_path, monkeypatch):
+    target = tmp_path / "plist.json"
+    target.write_text(json.dumps([
+        {"pid": 10, "status": "old", "last_heartbeat": 1.0},
+        {"pid": 11, "status": "keep", "last_heartbeat": 2.0},
+    ]))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda session: str(target))
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        yield
+
+    monkeypatch.setattr(process, "_file_lock", fake_lock)
+    monkeypatch.setattr(process.time, "time", lambda: 123.0)
+
+    process.update_process_status_for_pid(session=object(), pid=10, status="[WAITING] started")
+
+    data = json.loads(target.read_text())
+    updated = next(e for e in data if e["pid"] == 10)
+    untouched = next(e for e in data if e["pid"] == 11)
+    assert updated["status"] == "[WAITING] started"
+    assert updated["last_heartbeat"] == 123.0
+    assert untouched["status"] == "keep"
+
+
+def test_update_process_status_for_pid_noop_when_pid_missing(tmp_path, monkeypatch):
+    target = tmp_path / "plist.json"
+    original = [{"pid": 20, "status": "old", "last_heartbeat": 1.0}]
+    target.write_text(json.dumps(original))
+
+    monkeypatch.setattr(process, "_get_process_file_path", lambda session: str(target))
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        yield
+
+    monkeypatch.setattr(process, "_file_lock", fake_lock)
+
+    process.update_process_status_for_pid(session=object(), pid=99, status="[BROKEN] nope")
+
+    assert json.loads(target.read_text()) == original

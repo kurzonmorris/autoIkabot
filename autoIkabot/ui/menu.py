@@ -19,7 +19,7 @@ from typing import Any, Dict, List
 from autoIkabot.config import VERSION
 from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import get_process_health, read_critical_errors, report_critical_error, update_process_list
+from autoIkabot.utils.process import get_process_health, read_critical_errors, report_critical_error, update_process_list, update_process_status_for_pid
 
 logger = get_logger(__name__)
 
@@ -336,6 +336,14 @@ def _report_startup_failure(session, mod_name: str, code: str, detail: str) -> N
         logger.exception("Failed to report startup failure for %s", mod_name)
 
 
+
+def _safe_update_child_status(session, pid: int, status: str) -> None:
+    """Best-effort status update for child PID entries in process list."""
+    try:
+        update_process_status_for_pid(session, pid, status)
+    except Exception:
+        logger.debug("Could not update child status for pid=%s", pid, exc_info=True)
+
 def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) -> None:
     """Spawn a module as a background child process.
 
@@ -396,12 +404,14 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         if child_state == "escaped":
             print("\n  Returning to main menu...")
             logger.info("Background module '%s' config escaped to menu", mod["name"])
+            _safe_update_child_status(session, process.pid, "[PAUSED] startup escaped")
             break
         if child_state == "crashed":
             detail = f"{mod['name']} crashed during startup"
             print(f"\n  BG_START_CRASH: {detail}.")
             logger.warning("Background module '%s' crashed during startup", mod["name"])
             _report_startup_failure(session, mod["name"], "BG_START_CRASH", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_CRASH: {detail}")
             if process.is_alive():
                 try:
                     process.terminate()
@@ -411,6 +421,7 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
 
         if event.wait(timeout=0.25):
             logger.info("Background module '%s' config complete, returning to menu", mod["name"])
+            _safe_update_child_status(session, process.pid, "[WAITING] module started")
             break
         if not process.is_alive():
             code = process.exitcode
@@ -418,12 +429,14 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
             print(f"\n  BG_START_FAIL: {detail}.")
             logger.warning("Background module '%s' died during config (exitcode=%s)", mod["name"], code)
             _report_startup_failure(session, mod["name"], "BG_START_FAIL", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_FAIL: {detail}")
             break
         if (time.time() - start) > config_timeout:
             detail = f"{mod['name']} config exceeded 120s"
             print(f"\n  BG_START_TIMEOUT: {detail}. Returning to menu.")
             logger.warning("Background module '%s' config timed out, terminating", mod["name"])
             _report_startup_failure(session, mod["name"], "BG_START_TIMEOUT", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_TIMEOUT: {detail}")
             try:
                 process.terminate()
             except Exception:
@@ -509,6 +522,7 @@ def dispatch_module_auto(
 
         if child_state == "escaped":
             logger.info("Auto-load of '%s' escaped during config", mod["name"])
+            _safe_update_child_status(session, process.pid, "[PAUSED] autoload escaped")
             return False
         if child_state == "crashed":
             logger.warning("Auto-load of '%s' crashed during config", mod["name"])
@@ -518,6 +532,7 @@ def dispatch_module_auto(
                 "BG_AUTOLOAD_CRASH",
                 f"{mod['name']} crashed during startup",
             )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_CRASH: {mod['name']} crashed during startup")
             if process.is_alive():
                 try:
                     process.terminate()
@@ -526,6 +541,7 @@ def dispatch_module_auto(
             return False
 
         if event.wait(timeout=0.25):
+            _safe_update_child_status(session, process.pid, "[WAITING] auto-loaded module started")
             break
 
         if not process.is_alive():
@@ -539,6 +555,7 @@ def dispatch_module_auto(
                 "BG_AUTOLOAD_FAIL",
                 f"{mod['name']} exited during startup (code {process.exitcode})",
             )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_FAIL: {mod['name']} exited during startup (code {process.exitcode})")
             return False
 
         if (time.time() - start) > 120:
@@ -550,6 +567,7 @@ def dispatch_module_auto(
                 "BG_AUTOLOAD_TIMEOUT",
                 f"{mod['name']} config exceeded 120s",
             )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded 120s")
             try:
                 process.terminate()
             except Exception:
