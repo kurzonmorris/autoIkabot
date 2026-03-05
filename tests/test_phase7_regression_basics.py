@@ -1408,3 +1408,32 @@ def test_dispatch_module_auto_timeout_reports_critical(monkeypatch, capsys):
     assert "BG_AUTOLOAD_TIMEOUT" in out
     assert terminated["value"] is True
     assert reports and reports[-1][2].startswith("BG_AUTOLOAD_TIMEOUT:")
+
+
+
+def test_terminate_background_tasks_ignores_current_and_invalid_pids(monkeypatch):
+    monkeypatch.setattr(process, "update_process_list", lambda session: [{"pid": os.getpid(), "status": "[PROCESSING] self"}])
+
+    sent = []
+    monkeypatch.setattr(process.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def is_running(self):
+            return False
+
+        def status(self):
+            return "zombie"
+
+    monkeypatch.setattr(process.psutil, "Process", FakeProc)
+
+    summary = process.terminate_background_tasks(
+        session=object(),
+        runtime_pids={0, -1, os.getpid()},
+        processing_grace_seconds=1,
+    )
+
+    assert summary == {"total": 0, "processing": 0, "force_killed": 0}
+    assert sent == []

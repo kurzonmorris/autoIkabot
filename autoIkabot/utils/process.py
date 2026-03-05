@@ -364,6 +364,10 @@ def terminate_background_tasks(
     if runtime_pids:
         pids.update(int(pid) for pid in runtime_pids)
 
+    # Never target our own PID and ignore invalid PID values.
+    current_pid = os.getpid()
+    pids = {pid for pid in pids if isinstance(pid, int) and pid > 0 and pid != current_pid}
+
     if not pids:
         return {"total": 0, "processing": 0, "force_killed": 0}
 
