@@ -100,6 +100,44 @@ def test_terminate_background_tasks_non_processing_force_killed(monkeypatch):
     assert any(pid == 10 for pid, _ in sent_signals)
 
 
+
+def test_terminate_background_tasks_processing_exits_during_grace(monkeypatch):
+    class Proc:
+        def __init__(self, _pid):
+            self.calls = 0
+
+        def is_running(self):
+            self.calls += 1
+            return self.calls == 1
+
+        def status(self):
+            return "sleeping"
+
+    monkeypatch.setattr(process, "update_process_list", lambda _session: [{"pid": 333, "status": "[PROCESSING] busy"}])
+    monkeypatch.setattr(process.os, "kill", lambda *_args, **_kwargs: None)
+
+    proc_by_pid = {}
+
+    def fake_process(pid):
+        return proc_by_pid.setdefault(pid, Proc(pid))
+
+    monkeypatch.setattr(process.psutil, "Process", fake_process)
+
+    now = {"t": 0.0}
+
+    def fake_time():
+        now["t"] += 0.2
+        return now["t"]
+
+    monkeypatch.setattr(process.time, "time", fake_time)
+    monkeypatch.setattr(process.time, "sleep", lambda *_args, **_kwargs: None)
+
+    summary = process.terminate_background_tasks(session=object(), processing_grace_seconds=1)
+
+    assert summary["total"] == 1
+    assert summary["processing"] == 1
+    assert summary["force_killed"] == 0
+
 def test_terminate_background_tasks_processing_force_killed_after_grace(monkeypatch):
     entries = [{"pid": 21, "status": "[PROCESSING] long op"}]
     monkeypatch.setattr(process, "update_process_list", lambda session: entries)

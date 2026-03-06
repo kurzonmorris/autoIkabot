@@ -365,8 +365,8 @@ Prevent future regressions caused by conflicting design assumptions.
 Use this section as the canonical stage counter for implementation updates and status reports.
 
 - Total planned coding stages in this roadmap: **12**
-- Completed stages: **11/12**
-- Next stage: **12/12**
+- Completed stages: **12/12**
+- Next stage: **Complete (awaiting new roadmap items)**
 
 ### Stage checklist
 - [x] 1. Parent/child lifecycle stop-all-on-exit
@@ -380,7 +380,7 @@ Use this section as the canonical stage counter for implementation updates and s
 - [x] 9. RTM reliability and semantics alignment
 - [x] 10. Universal back-to-menu escape command
 - [x] 11. Documentation and operational consistency
-- [ ] 12. Regression test matrix completion and rollout stabilization
+- [x] 12. Regression test matrix completion and rollout stabilization
 
 ## Dependency order (non-conflicting sequence)
 
