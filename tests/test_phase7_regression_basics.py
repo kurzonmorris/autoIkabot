@@ -1968,7 +1968,11 @@ def test_construction_execute_transport_passes_lock_wait_context(monkeypatch):
 
 def test_construction_execute_transport_reports_error_when_lock_unavailable(monkeypatch):
     class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
         def setStatus(self, _status):
+            self.statuses.append(_status)
             return None
 
     reports = []
@@ -1976,9 +1980,11 @@ def test_construction_execute_transport_reports_error_when_lock_unavailable(monk
     monkeypatch.setattr(cm_mod, "sleep_with_heartbeat", lambda *args, **kwargs: None)
     monkeypatch.setattr(cm_mod, "report_critical_error", lambda *args: reports.append(args))
 
-    cm_mod._execute_transport(FakeSession(), {"routes": [], "useFreighters": False})
+    fake = FakeSession()
+    cm_mod._execute_transport(fake, {"routes": [], "useFreighters": False})
 
     assert reports and "Could not acquire shipping lock" in reports[-1][2]
+    assert any(st.startswith("[WAITING] Could not acquire shipping lock") for st in fake.statuses)
 
 
 

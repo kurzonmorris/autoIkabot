@@ -783,6 +783,7 @@ def _execute_transport(session, transport_plan):
         msg = "Could not acquire shipping lock after {} attempts — aborting transport".format(
             max_retries
         )
+        session.setStatus("[WAITING] {}".format(msg))
         logger.error(msg)
         report_critical_error(session, MODULE_NAME, msg)
         return
