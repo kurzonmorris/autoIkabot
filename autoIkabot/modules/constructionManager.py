@@ -51,7 +51,7 @@ from autoIkabot.modules.resourceTransportManager import (
     acquire_shipping_lock,
     release_shipping_lock,
 )
-from autoIkabot.ui.prompts import banner, chooseCity, enter, ignoreCities, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, chooseCity, enter, ignoreCities, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import (
     report_critical_error,
@@ -763,9 +763,14 @@ def _execute_transport(session, transport_plan):
     lock_acquired = False
     for attempt in range(1, max_retries + 1):
         session.setStatus(
-            "Acquiring shipping lock (attempt {}/{})...".format(attempt, max_retries)
+            "[WAITING] Acquiring shipping lock (attempt {}/{})...".format(attempt, max_retries)
         )
-        if acquire_shipping_lock(session, use_freighters=use_freighters, timeout=300):
+        if acquire_shipping_lock(
+            session,
+            use_freighters=use_freighters,
+            timeout=300,
+            wait_context="Construction transport",
+        ):
             lock_acquired = True
             break
         logger.warning(
@@ -778,24 +783,25 @@ def _execute_transport(session, transport_plan):
         msg = "Could not acquire shipping lock after {} attempts — aborting transport".format(
             max_retries
         )
+        session.setStatus("[WAITING] {}".format(msg))
         logger.error(msg)
         report_critical_error(session, MODULE_NAME, msg)
         return
 
     try:
         # Verify at least one ship is available before starting routes
-        session.setStatus("Checking ship availability...")
+        session.setStatus("[WAITING] Checking ship availability...")
         getter = getAvailableFreighters if use_freighters else getAvailableShips
         ships = getter(session)
         if ships == 0:
-            session.setStatus("Waiting for ships to become available...")
+            session.setStatus("[WAITING] Waiting for ships to become available...")
             ships = waitForArrival(session, useFreighters=use_freighters)
 
         logger.info(
             "Starting transport: %d route(s), %d ship(s) available",
             len(routes), ships,
         )
-        session.setStatus("Transporting resources for construction...")
+        session.setStatus("[PROCESSING] Transporting resources for construction...")
         executeRoutes(session, routes, useFreighters=use_freighters)
     except Exception as e:
         logger.error("Transport error: %s", e)
@@ -850,7 +856,7 @@ def _wait_for_construction(session, city_id, final_lvl):
         seconds_to_wait = max(completed_time - now, 0)
 
         session.setStatus(
-            "Waiting until {}, {} {} -> {} in {}, final lvl: {}".format(
+            "[WAITING] Waiting until {}, {} {} -> {} in {}, final lvl: {}".format(
                 getDateTime(time.time() + seconds_to_wait + 10)[11:],
                 cb.get("name", "?"),
                 cb.get("level", "?"),
@@ -998,7 +1004,7 @@ def _expand_building(session, city_id, building, wait_for_resources):
 
             # Resources available — resume
             session.setStatus(
-                "Upgrading {} to level {} in {}".format(
+                "[PROCESSING] Upgrading {} to level {} in {}".format(
                     building_name,
                     current_lv_display,
                     city.get("cityName", "?"),
@@ -1021,7 +1027,7 @@ def _expand_building(session, city_id, building, wait_for_resources):
             "ajax": "1",
         }
         session.setStatus(
-            "Upgrading {} to level {} in {}".format(
+            "[PROCESSING] Upgrading {} to level {} in {}".format(
                 building_name,
                 int(building_data.get("level", 0)) + 1,
                 city.get("cityName", "?"),
@@ -1268,6 +1274,9 @@ def constructionManager(session, event, stdin_fd):
                 event.set()
                 return
 
+    except ReturnToMainMenu:
+        event.set()
+        return
     except KeyboardInterrupt:
         event.set()
         return
@@ -1288,7 +1297,7 @@ def constructionManager(session, event, stdin_fd):
     info = "Construction: {} in {}".format(
         ", ".join(bldg_names), city.get("cityName", "?")
     )
-    session.setStatus(info)
+    session.setStatus("[PROCESSING] {}".format(info))
 
     try:
         # Execute transport first if planned

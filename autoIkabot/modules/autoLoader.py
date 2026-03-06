@@ -26,6 +26,8 @@ MODULE_SECTION = "Settings"
 MODULE_NUMBER = 4
 MODULE_DESCRIPTION = "Auto-start modules on login"
 
+RESTORE_HEALTH_STATES = {"WAITING", "PROCESSING", "PAUSED"}
+
 
 # ---------------------------------------------------------------------------
 # Config file helpers
@@ -70,6 +72,54 @@ def _save_autoload_configs(session, config_data: Dict[str, Any]) -> None:
 # Startup auto-launch (called from main.py before run_menu)
 # ---------------------------------------------------------------------------
 
+
+def record_shutdown_restore_states(session) -> None:
+    """Persist which modules should be restored on next startup.
+
+    Stores per-config shutdown metadata:
+    - ``last_shutdown_health``: health summary captured at shutdown.
+    - ``last_shutdown_restore``: whether autoload should relaunch this config.
+
+    A config is marked restorable when any matching running process health is
+    ``WAITING``, ``PROCESSING``, or ``PAUSED`` at shutdown boundaries.
+    """
+    config_data = _load_autoload_configs(session)
+    configs = config_data.get("configs", [])
+    if not configs:
+        return
+
+    from autoIkabot.utils.process import get_process_health, update_process_list
+
+    process_list = update_process_list(session)
+    changed = False
+
+    for cfg in configs:
+        module_name = cfg.get("module_name")
+        if not module_name:
+            continue
+        matches = [p for p in process_list if p.get("action") == module_name]
+
+        if matches:
+            healths = [get_process_health(p) for p in matches]
+            restorable = any(h in RESTORE_HEALTH_STATES for h in healths)
+            health_value = "RUNNING" if restorable else healths[0]
+        else:
+            # Nothing matching at shutdown boundary means this config was not
+            # actively running/paused when we exited, so do not auto-restore.
+            restorable = False
+            health_value = "STOPPED"
+
+        if cfg.get("last_shutdown_health") != health_value:
+            cfg["last_shutdown_health"] = health_value
+            changed = True
+
+        if cfg.get("last_shutdown_restore") != restorable:
+            cfg["last_shutdown_restore"] = restorable
+            changed = True
+
+    if changed:
+        _save_autoload_configs(session, config_data)
+
 def launch_saved_configs(session) -> None:
     """Auto-launch all enabled saved module configs.
 
@@ -110,6 +160,11 @@ def launch_saved_configs(session) -> None:
             continue
 
         module_name = cfg["module_name"]
+
+        if cfg.get("last_shutdown_restore") is False:
+            state = cfg.get("last_shutdown_health", "UNKNOWN")
+            print("  {}: previous shutdown state {} — not auto-reloading".format(module_name, state))
+            continue
 
         # Skip if already running and healthy
         if module_name in running_healthy:
