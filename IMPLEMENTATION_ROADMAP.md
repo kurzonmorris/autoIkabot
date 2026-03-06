@@ -357,6 +357,31 @@ Prevent future regressions caused by conflicting design assumptions.
 
 ---
 
+
+---
+
+## Delivery Progress Tracker (coding-stage counter)
+
+Use this section as the canonical stage counter for implementation updates and status reports.
+
+- Total planned coding stages in this roadmap: **12**
+- Completed stages: **11/12**
+- Next stage: **12/12**
+
+### Stage checklist
+- [x] 1. Parent/child lifecycle stop-all-on-exit
+- [x] 2. Deadlock-proof background startup handshake
+- [x] 3. Process file race safety
+- [x] 4. Unified task state system
+- [x] 5. Heartbeat-safe waiting everywhere
+- [x] 6. Formal cookie strategy implementation
+- [x] 7. Session continuity modes
+- [x] 8. Bounded network retry + BROKEN escalation
+- [x] 9. RTM reliability and semantics alignment
+- [x] 10. Universal back-to-menu escape command
+- [x] 11. Documentation and operational consistency
+- [ ] 12. Regression test matrix completion and rollout stabilization
+
 ## Dependency order (non-conflicting sequence)
 
 Implement in this order to avoid work against itself:
