@@ -1405,7 +1405,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
 
         # Wait for ships
         session.setStatus(
-            f"Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type_name}..."
+            f"[WAITING] Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type_name}..."
         )
         ship_check_start = time.time()
 
@@ -1492,7 +1492,7 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
                 break
 
             session.setStatus(
-                f"Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Sending..."
+                f"[PROCESSING] Auto Send [{route_index + 1}/{total_routes}] {origin_city['name']} -> {destination_city['name']} | Sending..."
             )
 
             executeRoutes(session, [route], useFreighters)
@@ -1644,7 +1644,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         ships_available = True
                         print(f"    Found {available_ships} {ship_type}")
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
+                            f"[PROCESSING] {origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
                         elapsed = int(time.time() - ship_check_start)
@@ -1653,7 +1653,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                             break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
+                            f"[WAITING] {origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
                         sleep_with_heartbeat(session, 120)
 
@@ -1765,7 +1765,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
         if interval_hours == 0:
             source_cities_names = ', '.join([city['name'] for city in origin_cities])
             print(f"\n  One-time shipment complete! ({total_shipments} shipments sent)")
-            session.setStatus(f"One-time shipment completed: {source_cities_names} -> {destination_city['name']}")
+            session.setStatus(f"[WAITING] One-time shipment completed: {source_cities_names} -> {destination_city['name']}")
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)
@@ -1774,7 +1774,7 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
         print(f"\n  Cycle complete ({total_shipments} shipments). Next run: {getDateTime(next_run_time.timestamp())}")
 
         session.setStatus(
-            f"{source_cities_names} -> {destination_city['name']} | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
+            f"[WAITING] {source_cities_names} -> {destination_city['name']} | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
         )
 
         first_run = False
@@ -1872,7 +1872,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         ships_available = True
                         print(f"    Found {available_ships} {ship_type}")
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
+                            f"[PROCESSING] {origin_city['name']} -> {destination_city['name']} | Found {available_ships} {ship_type}, attempting to send..."
                         )
                     else:
                         elapsed = int(time.time() - ship_check_start)
@@ -1881,7 +1881,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                             break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
-                            f"{origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
+                            f"[WAITING] {origin_city['name']} -> {destination_city['name']} | Waiting for {ship_type} (checked for {elapsed}s)..."
                         )
                         sleep_with_heartbeat(session, 120)
 
@@ -1993,7 +1993,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         if interval_hours == 0:
             dest_names = ', '.join([city['name'] for city in destination_cities])
             print(f"\n  One-time distribution complete! ({total_shipments} shipments sent)")
-            session.setStatus(f"One-time distribution completed: {origin_city['name']} -> {dest_names}")
+            session.setStatus(f"[WAITING] One-time distribution completed: {origin_city['name']} -> {dest_names}")
             return
 
         next_run_time = datetime.datetime.now() + datetime.timedelta(hours=interval_hours)
@@ -2002,7 +2002,7 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
         print(f"\n  Cycle complete ({total_shipments} shipments). Next run: {getDateTime(next_run_time.timestamp())}")
 
         session.setStatus(
-            f"{origin_city['name']} -> {len(destination_cities)} cities | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
+            f"[WAITING] {origin_city['name']} -> {len(destination_cities)} cities | Shipments: {total_shipments} | Next: {getDateTime(next_run_time.timestamp())}"
         )
 
         first_run = False
