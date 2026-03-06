@@ -249,7 +249,7 @@ def wait_for_miracle(session, island):
                 wait_time = int(float(enddate)) - int(float(currentdate))
                 next_activation_time = __import__("time").time() + wait_time
                 session.setStatus(
-                    "Miracle {} activated. Available at: {}".format(
+                    "[WAITING] Miracle {} activated. Available at: {}".format(
                         island["wonderName"], getDateTime(next_activation_time)
                     )
                 )
@@ -292,11 +292,12 @@ def do_it(session, island, iterations):
     infinite = iterations == 0
     iterations_left = "inf" if infinite else iterations
     count = 0
-    session.setStatus("Waiting to activate {}...".format(island["wonderName"]))
+    session.setStatus("[WAITING] Waiting to activate {}...".format(island["wonderName"]))
 
     while infinite or count < iterations:
         wait_for_miracle(session, island)
 
+        session.setStatus("[PROCESSING] Activating {}...".format(island["wonderName"]))
         response = activateMiracleHttpCall(session, island)
 
         if _is_error_response(response):
@@ -311,7 +312,7 @@ def do_it(session, island, iterations):
         if not infinite:
             iterations_left = iterations - count
         session.setStatus(
-            "Activated {} @{}, iterations left: {}".format(
+            "[WAITING] Activated {} @{}, iterations left: {}".format(
                 island["wonderName"], getDateTime(), iterations_left
             )
         )
@@ -480,7 +481,7 @@ def activateMiracle(session, event, stdin_fd):
         info = "Activate miracle {} indefinitely".format(island["wonderName"])
     else:
         info = "Activate miracle {} {:d} times".format(island["wonderName"], iterations)
-    session.setStatus(info)
+    session.setStatus(f"[WAITING] {info}")
 
     try:
         do_it(session, island, iterations)

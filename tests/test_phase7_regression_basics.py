@@ -1979,3 +1979,44 @@ def test_construction_execute_transport_reports_error_when_lock_unavailable(monk
     cm_mod._execute_transport(FakeSession(), {"routes": [], "useFreighters": False})
 
     assert reports and "Could not acquire shipping lock" in reports[-1][2]
+
+
+
+def test_activate_miracle_do_it_status_prefixes(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+    fake = FakeSession()
+    monkeypatch.setattr(am_mod, "wait_for_miracle", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(am_mod, "activateMiracleHttpCall", lambda *_args, **_kwargs: [None, [None, ["ok"]], None])
+
+    am_mod.do_it(fake, {"wonderName": "Hephaistos"}, iterations=1)
+
+    assert any(st.startswith("[WAITING] Waiting to activate") for st in fake.statuses)
+    assert any(st.startswith("[PROCESSING] Activating") for st in fake.statuses)
+    assert any(st.startswith("[WAITING] Activated") for st in fake.statuses)
+
+
+def test_wait_for_miracle_waiting_status_prefix(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def post(self, *args, **kwargs):
+            return json.dumps([None, None, [None, {"x": {"countdown": {"enddate": "200", "currentdate": "100"}}}]])
+
+    fake = FakeSession()
+    monkeypatch.setattr(am_mod, "getDateTime", lambda *_args, **_kwargs: "DATE")
+    monkeypatch.setattr(am_mod, "sleep_with_heartbeat", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("stop")))
+
+    with pytest.raises(RuntimeError, match="stop"):
+        am_mod.wait_for_miracle(fake, {"id": 1, "wonderName": "Athena", "ciudad": {"id": 1, "pos": 0}})
+
+    assert fake.statuses and fake.statuses[-1].startswith("[WAITING] Miracle Athena activated.")
