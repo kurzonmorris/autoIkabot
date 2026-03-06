@@ -2308,6 +2308,153 @@ def test_rtm_distribute_lock_failure_sets_waiting_status(monkeypatch):
 
     assert any(st.startswith("[WAITING] Origin -> Dest | Could not acquire shipping lock") for st in fake.statuses)
 
+
+def test_rtm_auto_send_ship_wait_timeout_sets_waiting_status(monkeypatch):
+    routes = [({"id": 1, "name": "Origin"}, {"id": 2, "name": "Dest"}, "island", 1, 0, 0, 0, 0)]
+
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+    fake = FakeSession()
+
+    class FakeClock:
+        def __init__(self):
+            self.values = iter([0, 4001])
+
+        def __call__(self):
+            return next(self.values, 4001)
+
+    monkeypatch.setattr(rtm_mod.time, "time", FakeClock())
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 0)
+
+    rtm_mod.do_it_auto_send(fake, routes, useFreighters=False, telegram_enabled=False)
+
+    assert any(st.startswith("[WAITING] Auto Send [1/1] | Timed out waiting for") for st in fake.statuses)
+
+
+def test_rtm_consolidate_ship_wait_timeout_sets_waiting_status(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def get(self, url):
+            return url
+
+    fake = FakeSession()
+
+    cities = {
+        1: {
+            "id": 1,
+            "name": "Origin",
+            "availableResources": [10, 0, 0, 0, 0],
+            "islandId": 10,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+        2: {
+            "id": 2,
+            "name": "Dest",
+            "availableResources": [0, 0, 0, 0, 0],
+            "islandId": 20,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+    }
+
+    class FakeClock:
+        def __init__(self):
+            self.values = iter([0, 4001])
+
+        def __call__(self):
+            return next(self.values, 4001)
+
+    monkeypatch.setattr(rtm_mod, "getCity", lambda html: dict(cities[int(html.split("=")[-1])]))
+    monkeypatch.setattr(rtm_mod.time, "time", FakeClock())
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 0)
+
+    rtm_mod.do_it(
+        fake,
+        origin_cities=[{"id": 1, "name": "Origin"}],
+        destination_city={"id": 2, "name": "Dest"},
+        island={"id": 99, "x": 1, "y": 2},
+        interval_hours=0,
+        resource_config=[1, None, None, None, None],
+        useFreighters=False,
+        send_mode=2,
+        telegram_enabled=False,
+        notify_on_start=False,
+    )
+
+    assert any(st.startswith("[WAITING] Origin -> Dest | Timed out waiting for") for st in fake.statuses)
+
+
+def test_rtm_distribute_ship_wait_timeout_sets_waiting_status(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def get(self, url):
+            return url
+
+    fake = FakeSession()
+
+    cities = {
+        1: {
+            "id": 1,
+            "name": "Origin",
+            "availableResources": [10, 0, 0, 0, 0],
+            "islandId": 10,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+        2: {
+            "id": 2,
+            "name": "Dest",
+            "availableResources": [0, 0, 0, 0, 0],
+            "islandId": 20,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+    }
+
+    class FakeClock:
+        def __init__(self):
+            self.values = iter([0, 4001])
+
+        def __call__(self):
+            return next(self.values, 4001)
+
+    monkeypatch.setattr(rtm_mod, "getCity", lambda html: dict(cities[int(html.split("=")[-1])]))
+    monkeypatch.setattr(rtm_mod, "getIsland", lambda _html: {"id": 1, "x": 1, "y": 2})
+    monkeypatch.setattr(rtm_mod.time, "time", FakeClock())
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 0)
+
+    rtm_mod.do_it_distribute(
+        fake,
+        origin_city={"id": 1, "name": "Origin"},
+        destination_cities=[{"id": 2, "name": "Dest"}],
+        interval_hours=0,
+        resource_config=[1, 0, 0, 0, 0],
+        useFreighters=False,
+        telegram_enabled=False,
+        notify_on_start=False,
+    )
+
+    assert any(st.startswith("[WAITING] Origin -> Dest | Timed out waiting for") for st in fake.statuses)
+
 def test_activate_miracle_do_it_status_prefixes(monkeypatch):
     class FakeSession:
         def __init__(self):

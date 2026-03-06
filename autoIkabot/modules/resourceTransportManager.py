@@ -1422,7 +1422,11 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
 
             elapsed = int(time.time() - ship_check_start)
             if elapsed > max_ship_wait:
-                print(f"    Timed out waiting for {ship_type_name} after {elapsed}s")
+                timeout_msg = f"Timed out waiting for {ship_type_name} after {elapsed}s"
+                session.setStatus(
+                    f"[WAITING] Auto Send [{route_index + 1}/{total_routes}] | {timeout_msg}"
+                )
+                print(f"    {timeout_msg}")
                 break
             print(f"    Waiting for {ship_type_name}... (checked for {elapsed}s)")
             session.setStatus(
@@ -1652,7 +1656,11 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                     else:
                         elapsed = int(time.time() - ship_check_start)
                         if elapsed > max_ship_wait:
-                            print(f"    Timed out waiting for {ship_type} after {elapsed}s, skipping")
+                            timeout_msg = f"Timed out waiting for {ship_type} after {elapsed}s, skipping"
+                            session.setStatus(
+                                f"[WAITING] {origin_city['name']} -> {destination_city['name']} | {timeout_msg}"
+                            )
+                            print(f"    {timeout_msg}")
                             break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
@@ -1884,7 +1892,11 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                     else:
                         elapsed = int(time.time() - ship_check_start)
                         if elapsed > max_ship_wait:
-                            print(f"    Timed out waiting for {ship_type} after {elapsed}s, skipping")
+                            timeout_msg = f"Timed out waiting for {ship_type} after {elapsed}s, skipping"
+                            session.setStatus(
+                                f"[WAITING] {origin_city['name']} -> {destination_city['name']} | {timeout_msg}"
+                            )
+                            print(f"    {timeout_msg}")
                             break
                         print(f"    Waiting for {ship_type}... (checked for {elapsed}s)")
                         session.setStatus(
