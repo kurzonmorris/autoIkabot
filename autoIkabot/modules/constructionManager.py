@@ -856,7 +856,7 @@ def _wait_for_construction(session, city_id, final_lvl):
         seconds_to_wait = max(completed_time - now, 0)
 
         session.setStatus(
-            "Waiting until {}, {} {} -> {} in {}, final lvl: {}".format(
+            "[WAITING] Waiting until {}, {} {} -> {} in {}, final lvl: {}".format(
                 getDateTime(time.time() + seconds_to_wait + 10)[11:],
                 cb.get("name", "?"),
                 cb.get("level", "?"),
@@ -1004,7 +1004,7 @@ def _expand_building(session, city_id, building, wait_for_resources):
 
             # Resources available — resume
             session.setStatus(
-                "Upgrading {} to level {} in {}".format(
+                "[PROCESSING] Upgrading {} to level {} in {}".format(
                     building_name,
                     current_lv_display,
                     city.get("cityName", "?"),
@@ -1027,7 +1027,7 @@ def _expand_building(session, city_id, building, wait_for_resources):
             "ajax": "1",
         }
         session.setStatus(
-            "Upgrading {} to level {} in {}".format(
+            "[PROCESSING] Upgrading {} to level {} in {}".format(
                 building_name,
                 int(building_data.get("level", 0)) + 1,
                 city.get("cityName", "?"),
@@ -1297,7 +1297,7 @@ def constructionManager(session, event, stdin_fd):
     info = "Construction: {} in {}".format(
         ", ".join(bldg_names), city.get("cityName", "?")
     )
-    session.setStatus(info)
+    session.setStatus("[PROCESSING] {}".format(info))
 
     try:
         # Execute transport first if planned

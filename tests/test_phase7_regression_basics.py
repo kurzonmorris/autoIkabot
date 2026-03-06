@@ -1936,6 +1936,70 @@ def test_activate_miracle_escape_sets_event(monkeypatch):
 
 
 
+
+def test_wait_for_construction_waiting_status_prefix(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def get(self, _url):
+            return "html"
+
+    fake = FakeSession()
+
+    monkeypatch.setattr(cm_mod, "getCity", lambda _html: {
+        "cityName": "City",
+        "position": [{"name": "Town Hall", "level": 1, "completed": "200"}],
+    })
+    monkeypatch.setattr(cm_mod.time, "time", lambda: 100)
+    monkeypatch.setattr(cm_mod, "getDateTime", lambda *_args, **_kwargs: "DATE")
+    monkeypatch.setattr(
+        cm_mod,
+        "sleep_with_heartbeat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("stop")),
+    )
+
+    with pytest.raises(RuntimeError, match="stop"):
+        cm_mod._wait_for_construction(fake, city_id=1, final_lvl=2)
+
+    assert fake.statuses and fake.statuses[-1].startswith("[WAITING] Waiting until")
+
+
+def test_expand_building_processing_status_prefix(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def post(self, *args, **kwargs):
+            return "[]"
+
+    fake = FakeSession()
+
+    monkeypatch.setattr(
+        cm_mod,
+        "_wait_for_construction",
+        lambda *_args, **_kwargs: {
+            "cityName": "City",
+            "position": [{"level": 1, "canUpgrade": True, "building": "townHall"}],
+        },
+    )
+    monkeypatch.setattr(cm_mod, "report_critical_error", lambda *args, **kwargs: None)
+
+    cm_mod._expand_building(
+        fake,
+        city_id="1",
+        building={"level": 1, "position": 0, "name": "Town Hall", "upgradeTo": 2},
+        wait_for_resources=False,
+    )
+
+    assert any(st.startswith("[PROCESSING] Upgrading Town Hall") for st in fake.statuses)
+
 def test_construction_execute_transport_passes_lock_wait_context(monkeypatch):
     routes = [({"name": "A"}, {"name": "B"}, "i", 1, 0, 0, 0, 0)]
 
