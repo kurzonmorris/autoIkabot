@@ -2178,6 +2178,136 @@ def test_rtm_one_time_distribution_status_prefix(monkeypatch):
 
     assert fake.statuses[-1].startswith("[WAITING] One-time distribution completed")
 
+
+def test_rtm_auto_send_lock_failure_sets_waiting_status(monkeypatch):
+    routes = [({"id": 1, "name": "Origin"}, {"id": 2, "name": "Dest"}, "island", 1, 0, 0, 0, 0)]
+
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+    fake = FakeSession()
+
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 1)
+    monkeypatch.setattr(rtm_mod, "acquire_shipping_lock", lambda *args, **kwargs: False)
+    monkeypatch.setattr(rtm_mod, "sleep_with_heartbeat", lambda *args, **kwargs: None)
+
+    rtm_mod.do_it_auto_send(fake, routes, useFreighters=False, telegram_enabled=False)
+
+    assert any("Could not acquire shipping lock" in st for st in fake.statuses)
+    assert any(st.startswith("[WAITING] Auto Send [1/1]") for st in fake.statuses)
+
+
+def test_rtm_consolidate_lock_failure_sets_waiting_status(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def get(self, url):
+            return url
+
+    fake = FakeSession()
+
+    cities = {
+        1: {
+            "id": 1,
+            "name": "Origin",
+            "availableResources": [10, 0, 0, 0, 0],
+            "islandId": 10,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+        2: {
+            "id": 2,
+            "name": "Dest",
+            "availableResources": [0, 0, 0, 0, 0],
+            "islandId": 20,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+    }
+
+    monkeypatch.setattr(rtm_mod, "getCity", lambda html: dict(cities[int(html.split("=")[-1])]))
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 1)
+    monkeypatch.setattr(rtm_mod, "acquire_shipping_lock", lambda *args, **kwargs: False)
+    monkeypatch.setattr(rtm_mod, "sleep_with_heartbeat", lambda *args, **kwargs: None)
+
+    rtm_mod.do_it(
+        fake,
+        origin_cities=[{"id": 1, "name": "Origin"}],
+        destination_city={"id": 2, "name": "Dest"},
+        island={"id": 99, "x": 1, "y": 2},
+        interval_hours=0,
+        resource_config=[1, None, None, None, None],
+        useFreighters=False,
+        send_mode=2,
+        telegram_enabled=False,
+        notify_on_start=False,
+    )
+
+    assert any(st.startswith("[WAITING] Origin -> Dest | Could not acquire shipping lock") for st in fake.statuses)
+
+
+def test_rtm_distribute_lock_failure_sets_waiting_status(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.statuses = []
+            self.username = "u"
+
+        def setStatus(self, status):
+            self.statuses.append(status)
+
+        def get(self, url):
+            return url
+
+    fake = FakeSession()
+
+    cities = {
+        1: {
+            "id": 1,
+            "name": "Origin",
+            "availableResources": [10, 0, 0, 0, 0],
+            "islandId": 10,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+        2: {
+            "id": 2,
+            "name": "Dest",
+            "availableResources": [0, 0, 0, 0, 0],
+            "islandId": 20,
+            "freeSpaceForResources": [100, 100, 100, 100, 100],
+            "isOwnCity": True,
+        },
+    }
+
+    monkeypatch.setattr(rtm_mod, "getCity", lambda html: dict(cities[int(html.split("=")[-1])]))
+    monkeypatch.setattr(rtm_mod, "getIsland", lambda _html: {"id": 1, "x": 1, "y": 2})
+    monkeypatch.setattr(rtm_mod, "getAvailableShips", lambda _session: 1)
+    monkeypatch.setattr(rtm_mod, "acquire_shipping_lock", lambda *args, **kwargs: False)
+    monkeypatch.setattr(rtm_mod, "sleep_with_heartbeat", lambda *args, **kwargs: None)
+
+    rtm_mod.do_it_distribute(
+        fake,
+        origin_city={"id": 1, "name": "Origin"},
+        destination_cities=[{"id": 2, "name": "Dest"}],
+        interval_hours=0,
+        resource_config=[1, 0, 0, 0, 0],
+        useFreighters=False,
+        telegram_enabled=False,
+        notify_on_start=False,
+    )
+
+    assert any(st.startswith("[WAITING] Origin -> Dest | Could not acquire shipping lock") for st in fake.statuses)
+
 def test_activate_miracle_do_it_status_prefixes(monkeypatch):
     class FakeSession:
         def __init__(self):

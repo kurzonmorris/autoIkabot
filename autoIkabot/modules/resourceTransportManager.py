@@ -1458,6 +1458,9 @@ def do_it_auto_send(session, routes, useFreighters, telegram_enabled):
 
         if not lock_acquired:
             error_msg = f"Could not acquire shipping lock after {max_retries} attempts"
+            session.setStatus(
+                f"[WAITING] Auto Send [{route_index + 1}/{total_routes}] | {error_msg}"
+            )
             print(f"    FAILED: {error_msg}")
             if telegram_enabled:
                 msg = (
@@ -1741,7 +1744,11 @@ def do_it(session, origin_cities, destination_city, island, interval_hours, reso
                         release_shipping_lock(session, use_freighters=useFreighters)
                 else:
                     consecutive_failures += 1
-                    print(f"    Could not acquire shipping lock after {max_retries} attempts")
+                    lock_msg = f"Could not acquire shipping lock after {max_retries} attempts"
+                    session.setStatus(
+                        f"[WAITING] {origin_city['name']} -> {destination_city['name']} | {lock_msg}"
+                    )
+                    print(f"    {lock_msg}")
                     if telegram_enabled:
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{island['x']}:{island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this cycle"
                         sendToBot(session, msg)
@@ -1969,7 +1976,11 @@ def do_it_distribute(session, origin_city, destination_cities, interval_hours, r
                         release_shipping_lock(session, use_freighters=useFreighters)
                 else:
                     consecutive_failures += 1
-                    print(f"    Could not acquire shipping lock after {max_retries} attempts")
+                    lock_msg = f"Could not acquire shipping lock after {max_retries} attempts"
+                    session.setStatus(
+                        f"[WAITING] {origin_city['name']} -> {destination_city['name']} | {lock_msg}"
+                    )
+                    print(f"    {lock_msg}")
                     if telegram_enabled:
                         msg = f"Account: {session.username}\nFrom: {origin_city['name']}\nTo: [{dest_island['x']}:{dest_island['y']}] {destination_city['name']}\nProblem: Could not acquire shipping lock\nAttempts: {max_retries}\nConsecutive failures: {consecutive_failures}\nAction: Skipping this destination"
                         sendToBot(session, msg)
