@@ -268,15 +268,20 @@ def taskStatus(session) -> None:
 
         choice = read(min=0, max=len(actions), digit=True)
         if choice == 0:
-            # On exit, automatically kill broken modules so user can restart cleanly.
-            for bi in broken_indices:
-                proc = process_list[bi]
-                try:
-                    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
-                    os.kill(proc["pid"], sig)
-                    logger.info("Auto-killed broken process %d (%s)", proc["pid"], proc.get("action", "?"))
-                except (ProcessLookupError, PermissionError):
-                    pass
+            # Kill broken modules on exit so user can restart cleanly.
+            if broken_indices:
+                print()
+                for bi in broken_indices:
+                    proc = process_list[bi]
+                    try:
+                        sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+                        os.kill(proc["pid"], sig)
+                        print(f"  Cleaned up broken: {proc.get('action', '?')} (PID {proc['pid']})")
+                        logger.info("Auto-killed broken process %d (%s)", proc["pid"], proc.get("action", "?"))
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError:
+                        print(f"  Could not kill broken PID {proc['pid']} (permission denied)")
             return
 
         action_entry = actions[choice - 1]

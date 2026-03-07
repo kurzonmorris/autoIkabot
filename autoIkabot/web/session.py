@@ -898,15 +898,21 @@ class Session:
                 # Check for session expiry
                 if not ignore_expire and self._is_expired(resp_text):
                     self._handle_session_expired()
-                    # Retry from scratch with fresh token
-                    return self.post(
-                        url=url_original,
-                        payload=payload_original,
-                        params=params_original,
-                        ignore_expire=ignore_expire,
-                        no_index=no_index,
-                        full_response=full_response,
-                    )
+                    # Rebuild request with fresh token and retry via loop
+                    url = url_original
+                    payload = dict(payload_original)
+                    params = dict(params_original)
+                    token = self._extract_token()
+                    url = url.replace(ACTION_REQUEST_PLACEHOLDER, token)
+                    if "actionRequest" in payload:
+                        payload["actionRequest"] = token
+                    if "actionRequest" in params:
+                        params["actionRequest"] = token
+                    if "ajax" not in params and "ajax" not in payload:
+                        if params:
+                            params["ajax"] = "1"
+                    full_url = self.url_base.replace("index.php", "") + url if no_index else self.url_base + url
+                    continue
 
                 # Check for bad request ID — retry with fresh token
                 if "TXT_ERROR_WRONG_REQUEST_ID" in resp_text:
@@ -919,8 +925,11 @@ class Session:
                     url = url_original
                     payload = dict(payload_original)
                     params = dict(params_original)
+                    # Read cached token outside the lock to avoid deadlock
+                    # (_extract_token also acquires _token_lock)
                     with self._token_lock:
-                        token = self._action_request_token or self._extract_token()
+                        cached = self._action_request_token
+                    token = cached if cached else self._extract_token()
                     url = url.replace(ACTION_REQUEST_PLACEHOLDER, token)
                     if "actionRequest" in payload:
                         payload["actionRequest"] = token

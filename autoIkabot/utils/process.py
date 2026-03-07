@@ -125,6 +125,24 @@ def _file_lock(filepath: str, timeout: float = 5.0, poll: float = 0.05):
                 f.write(str(os.getpid()))
             break
         except FileExistsError:
+            # Check if the lock holder is still alive (stale lock detection)
+            try:
+                with open(lock_path, "r") as f:
+                    holder_pid = int(f.read().strip())
+                if not psutil.pid_exists(holder_pid):
+                    # Stale lock from a crashed process — remove it
+                    try:
+                        os.remove(lock_path)
+                    except OSError:
+                        pass
+                    continue
+            except (ValueError, OSError):
+                # Corrupt or unreadable lock file — remove it
+                try:
+                    os.remove(lock_path)
+                except OSError:
+                    pass
+                continue
             if (time.time() - start) > timeout:
                 raise TimeoutError(f"Lock timeout for {filepath}")
             time.sleep(poll)
