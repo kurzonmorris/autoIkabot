@@ -15,7 +15,7 @@ import traceback
 from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import set_child_mode
-from autoIkabot.web.game_mirror import compute_port, run_mirror
+from autoIkabot.web.game_mirror import compute_port, get_lan_ip, run_mirror
 
 logger = get_logger(__name__)
 
@@ -49,9 +49,13 @@ def webServer(session, event, stdin_fd):
 
         email = session._account_info.get("email", session.username)
         port = compute_port(email, session.servidor, session.mundo)
+        lan_ip = get_lan_ip()
+        url = f"http://{lan_ip}:{port}"
 
         print("  Game Mirror (Web Server)")
         print("  " + "=" * 40)
+        print()
+        print(f"  {url}")
         print()
         print(f"  Account: {session.username} on s{session.mundo}-{session.servidor}")
         print(f"  Starting on port {port}...")
@@ -73,9 +77,9 @@ def webServer(session, event, stdin_fd):
         set_child_mode(session)
         event.set()
 
-        # Start the server
+        # Start the server — bind to 0.0.0.0 so it's reachable on LAN
         try:
-            info = run_mirror(session, host="127.0.0.1", port=port)
+            info = run_mirror(session, host="0.0.0.0", port=port)
         except ImportError as e:
             logger.error("Missing dependency: %s", e)
             session.setStatus(f"[BROKEN] {e}")
@@ -89,7 +93,6 @@ def webServer(session, event, stdin_fd):
             report_critical_error(session, MODULE_NAME, str(e))
             return
 
-        url = info["url"]
         session.setStatus(f"[PROCESSING] mirror running on {url}")
         logger.info("Game mirror running at %s", url)
 

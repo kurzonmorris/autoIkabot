@@ -51,6 +51,29 @@ _STRIP_PATTERNS = [
 _CACHEABLE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/svg+xml", "image/webp"}
 
 
+def get_lan_ip() -> str:
+    """Get the machine's LAN IP address (e.g. 192.168.1.x).
+
+    Uses a UDP connect trick to find the default route IP without
+    actually sending any traffic.
+
+    Returns
+    -------
+    str
+        LAN IP like "192.168.1.42", or "127.0.0.1" as fallback.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        # Connect to a non-routable address to determine the default interface
+        s.connect(("10.254.254.254", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def compute_port(email: str, servidor: str, mundo: str) -> int:
     """Compute a deterministic port for this account+server combination.
 
