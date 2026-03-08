@@ -140,8 +140,10 @@ def _render_menu(session) -> Dict[int, Dict]:
                 ).strftime("%b %d %H:%M")
             health = get_process_health(proc)
             status = proc.get("status", "running")
-            if len(status) > 30:
-                status = status[:27] + "..."
+            # Show full URL for mirror status lines
+            if "http://" not in status and "https://" not in status:
+                if len(status) > 30:
+                    status = status[:27] + "..."
             print(
                 f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15}"
                 f" | {health:<8} | {status}"
