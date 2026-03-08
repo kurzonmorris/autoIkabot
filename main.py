@@ -216,6 +216,21 @@ def main() -> None:
             background=True,
         )
 
+        # Daily Tasks (Regular/Daily) — background
+        from autoIkabot.modules.dailyTasks import (
+            dailyTasks,
+            MODULE_NAME as DAILY_NAME,
+            MODULE_SECTION as DAILY_SECTION,
+            MODULE_NUMBER as DAILY_NUMBER,
+            MODULE_DESCRIPTION as DAILY_DESC,
+        )
+        register_module(
+            name=DAILY_NAME, section=DAILY_SECTION,
+            number=DAILY_NUMBER, description=DAILY_DESC,
+            func=dailyTasks,
+            background=True,
+        )
+
         # Auto Loader (Settings) — synchronous
         from autoIkabot.modules.autoLoader import (
             autoLoader,
@@ -258,6 +273,23 @@ def main() -> None:
             number=SPY_NUMBER, description=SPY_DESC,
             func=spyTool,
         )
+
+        # External Modules (Settings) — load and manage third-party modules
+        from autoIkabot.modules.externalModules import (
+            externalModules,
+            MODULE_NAME as EXT_NAME,
+            MODULE_SECTION as EXT_SECTION,
+            MODULE_NUMBER as EXT_NUMBER,
+            MODULE_DESCRIPTION as EXT_DESC,
+            load_all_external_modules,
+        )
+        register_module(
+            name=EXT_NAME, section=EXT_SECTION,
+            number=EXT_NUMBER, description=EXT_DESC,
+            func=externalModules,
+        )
+        # Auto-register any external modules saved from previous sessions
+        load_all_external_modules()
 
         # Auto-launch saved module configs before entering the menu
         from autoIkabot.modules.autoLoader import launch_saved_configs
