@@ -9,6 +9,9 @@ so it stays the same across restarts and reinstalls.
 """
 
 import os
+import re
+import string
+import secrets
 import sys
 import traceback
 
@@ -23,6 +26,37 @@ MODULE_NAME = "Web Server"
 MODULE_SECTION = "Settings"
 MODULE_NUMBER = 6
 MODULE_DESCRIPTION = "Play Ikariam in your browser via the bot's session"
+
+
+def _validate_password(pw: str) -> str | None:
+    """Validate password meets requirements. Returns error message or None."""
+    if len(pw) < 6:
+        return "Password must be at least 6 characters."
+    if not re.search(r"[A-Z]", pw):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r"[0-9]", pw):
+        return "Password must contain at least one number."
+    if not re.search(r"[^A-Za-z0-9]", pw):
+        return "Password must contain at least one symbol."
+    return None
+
+
+def _generate_password(length: int = 12) -> str:
+    """Generate a random password that meets all requirements."""
+    symbols = "!@#$%^&*"
+    # Guarantee at least one of each required type
+    pw = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+        secrets.choice(symbols),
+    ]
+    # Fill the rest with a mix
+    pool = string.ascii_letters + string.digits + symbols
+    pw += [secrets.choice(pool) for _ in range(length - 3)]
+    # Shuffle so the guaranteed chars aren't always at the start
+    result = list(pw)
+    secrets.SystemRandom().shuffle(result)
+    return "".join(result)
 
 
 def webServer(session, event, stdin_fd):
@@ -61,6 +95,25 @@ def webServer(session, event, stdin_fd):
         print(f"  Starting on port {port}...")
         print()
 
+        # Password setup
+        print("  Set a password to protect the web server.")
+        print("  Requirements: 6+ chars, 1 uppercase, 1 number, 1 symbol")
+        print("  Leave blank to auto-generate a password.")
+        print()
+        password = None
+        while password is None:
+            raw = read(msg="  Password: ", min=0, max=64)
+            if raw == "":
+                password = _generate_password()
+                print(f"  Generated password: {password}")
+            else:
+                err = _validate_password(raw)
+                if err:
+                    print(f"  {err}")
+                else:
+                    password = raw
+        print()
+
         # Check if notifications are configured and ask about sending link
         send_notification = False
         try:
@@ -79,7 +132,7 @@ def webServer(session, event, stdin_fd):
 
         # Start the server — bind to 0.0.0.0 so it's reachable on LAN
         try:
-            info = run_mirror(session, host="0.0.0.0", port=port)
+            info = run_mirror(session, host="0.0.0.0", port=port, password=password)
         except ImportError as e:
             logger.error("Missing dependency: %s", e)
             session.setStatus(f"[BROKEN] {e}")
@@ -103,7 +156,8 @@ def webServer(session, event, stdin_fd):
                 sendToBot(
                     session,
                     f"Game mirror started for {session.username} "
-                    f"(s{session.mundo}-{session.servidor}):\n{url}",
+                    f"(s{session.mundo}-{session.servidor}):\n{url}\n"
+                    f"Password: {password}",
                 )
             except Exception as e:
                 logger.warning("Failed to send mirror link notification: %s", e)

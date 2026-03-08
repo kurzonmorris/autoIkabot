@@ -20,7 +20,9 @@ Security fixes vs original ikabot:
 """
 
 import hashlib
+import hmac
 import io
+import math
 import os
 import re
 import signal
@@ -125,7 +127,7 @@ def find_available_port(preferred: int, host: str = "127.0.0.1") -> int:
     raise RuntimeError("No available ports in range %d-%d" % (_PORT_RANGE_START, _PORT_RANGE_START + _PORT_RANGE_SIZE))
 
 
-def _create_flask_app(session, process_list_func) -> Any:
+def _create_flask_app(session, process_list_func, password: Optional[str] = None) -> Any:
     """Build the Flask application for the game mirror.
 
     Parameters
@@ -134,13 +136,15 @@ def _create_flask_app(session, process_list_func) -> Any:
         Authenticated game session.
     process_list_func : callable
         Function that returns the current process list (for the status tab).
+    password : str, optional
+        If set, all requests require authentication via a login page.
 
     Returns
     -------
     Flask app
     """
     try:
-        from flask import Flask, Response, request, abort
+        from flask import Flask, Response, request, abort, redirect, make_response
     except ImportError:
         raise ImportError(
             "Flask is required for the game mirror. Install it with:\n"
@@ -149,6 +153,127 @@ def _create_flask_app(session, process_list_func) -> Any:
 
     app = Flask(__name__)
     app.config["PROPAGATE_EXCEPTIONS"] = True
+
+    # --- Authentication setup ---
+    _AUTH_COOKIE = "autoikabot_auth"
+    _instance_secret = os.urandom(32)
+
+    # Brute-force lockout state per IP
+    # {ip: {"fails": int, "locked_until": float, "rounds": int}}
+    _lockout: Dict[str, Dict] = {}
+    _ATTEMPTS_PER_ROUND = 5
+    _FIRST_LOCKOUT_SECS = 5 * 60       # 5 minutes
+    _SUBSEQUENT_LOCKOUT_SECS = 30 * 60  # 30 minutes
+
+    def _make_auth_token() -> str:
+        """HMAC-SHA256 of the password with instance secret."""
+        return hmac.new(_instance_secret, password.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def _check_lockout(ip: str) -> Optional[str]:
+        """Return a message if IP is locked out, else None."""
+        info = _lockout.get(ip)
+        if info is None:
+            return None
+        if info["locked_until"] > time.time():
+            remaining = info["locked_until"] - time.time()
+            mins = math.ceil(remaining / 60)
+            return f"Too many failed attempts. Try again in {mins} minute{'s' if mins != 1 else ''}."
+        return None
+
+    def _record_fail(ip: str):
+        """Record a failed login attempt for this IP."""
+        if ip not in _lockout:
+            _lockout[ip] = {"fails": 0, "locked_until": 0.0, "rounds": 0}
+        info = _lockout[ip]
+        info["fails"] += 1
+        if info["fails"] >= _ATTEMPTS_PER_ROUND:
+            info["rounds"] += 1
+            info["fails"] = 0
+            if info["rounds"] == 1:
+                info["locked_until"] = time.time() + _FIRST_LOCKOUT_SECS
+            else:
+                info["locked_until"] = time.time() + _SUBSEQUENT_LOCKOUT_SECS
+
+    def _clear_lockout(ip: str):
+        """Clear lockout state on successful login."""
+        _lockout.pop(ip, None)
+
+    _LOGIN_PAGE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>autoIkabot - Login</title>
+<style>
+  body {{ background: #1a1a2e; color: #e0e0e0; font-family: sans-serif;
+         display: flex; justify-content: center; align-items: center;
+         min-height: 100vh; margin: 0; }}
+  .box {{ background: #16213e; padding: 2rem; border-radius: 8px;
+          box-shadow: 0 4px 20px rgba(0,0,0,.4); width: 320px; }}
+  h2 {{ margin: 0 0 1rem; text-align: center; color: #e94560; }}
+  input[type=password] {{ width: 100%; padding: 10px; margin: 8px 0 16px;
+         box-sizing: border-box; border: 1px solid #0f3460; border-radius: 4px;
+         background: #1a1a2e; color: #e0e0e0; font-size: 14px; }}
+  button {{ width: 100%; padding: 10px; background: #e94560; color: white;
+           border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }}
+  button:hover {{ background: #c73a52; }}
+  .error {{ color: #e94560; text-align: center; margin-bottom: 8px; font-size: 13px; }}
+</style>
+</head>
+<body>
+<div class="box">
+  <h2>autoIkabot</h2>
+  {error}
+  <form method="POST" action="/login">
+    <input type="password" name="password" placeholder="Password" autofocus>
+    <button type="submit">Login</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+    if password:
+        @app.route("/login", methods=["GET", "POST"])
+        def login():
+            ip = request.remote_addr or "unknown"
+            if request.method == "GET":
+                lockout_msg = _check_lockout(ip)
+                error = f'<p class="error">{lockout_msg}</p>' if lockout_msg else ""
+                return Response(_LOGIN_PAGE.format(error=error), content_type="text/html")
+
+            # POST — check password
+            lockout_msg = _check_lockout(ip)
+            if lockout_msg:
+                error = f'<p class="error">{lockout_msg}</p>'
+                return Response(_LOGIN_PAGE.format(error=error), content_type="text/html")
+
+            submitted = request.form.get("password", "")
+            if hmac.compare_digest(submitted, password):
+                _clear_lockout(ip)
+                resp = make_response(redirect("/"))
+                resp.set_cookie(
+                    _AUTH_COOKIE,
+                    _make_auth_token(),
+                    httponly=True,
+                    samesite="Strict",
+                )
+                return resp
+            else:
+                _record_fail(ip)
+                lockout_msg = _check_lockout(ip)
+                if lockout_msg:
+                    error = f'<p class="error">{lockout_msg}</p>'
+                else:
+                    error = '<p class="error">Wrong password.</p>'
+                return Response(_LOGIN_PAGE.format(error=error), content_type="text/html")
+
+        @app.before_request
+        def require_auth():
+            if request.path == "/login":
+                return None
+            token = request.cookies.get(_AUTH_COOKIE)
+            if not token or not hmac.compare_digest(token, _make_auth_token()):
+                return redirect("/login")
 
     # Image cache directory
     cache_dir = os.path.join(os.path.expanduser("~"), ".autoikabot_cache")
@@ -325,7 +450,12 @@ def _create_flask_app(session, process_list_func) -> Any:
     return app
 
 
-def run_mirror(session, host: str = "127.0.0.1", port: Optional[int] = None) -> Dict[str, Any]:
+def run_mirror(
+    session,
+    host: str = "127.0.0.1",
+    port: Optional[int] = None,
+    password: Optional[str] = None,
+) -> Dict[str, Any]:
     """Start the game mirror web server.
 
     Parameters
@@ -336,6 +466,8 @@ def run_mirror(session, host: str = "127.0.0.1", port: Optional[int] = None) -> 
         Bind address (default: 127.0.0.1 for security).
     port : int, optional
         Override port. If None, uses deterministic port from account.
+    password : str, optional
+        If set, require this password to access the mirror.
 
     Returns
     -------
@@ -353,7 +485,7 @@ def run_mirror(session, host: str = "127.0.0.1", port: Optional[int] = None) -> 
             raise RuntimeError(f"Port {port} is already in use")
 
     process_list_func = lambda: update_process_list(session)
-    app = _create_flask_app(session, process_list_func)
+    app = _create_flask_app(session, process_list_func, password=password)
 
     url = f"http://{host}:{port}"
     logger.info("Starting game mirror at %s", url)
