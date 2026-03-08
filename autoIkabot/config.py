@@ -28,6 +28,11 @@ DEBUG_DIR = PROJECT_ROOT / "autoIkabot" / "debug"
 # Encrypted accounts file path
 ACCOUNTS_FILE = DATA_DIR / "accounts.enc"
 
+# External modules — directory where downloaded .py files are stored,
+# and JSON file that records the registry of loaded external modules.
+EXTERNAL_MODULES_DIR = DATA_DIR / "external_modules"
+EXTERNAL_MODULES_FILE = DATA_DIR / "external_modules.json"
+
 # ---------------------------------------------------------------------------
 # Logging constants
 # ---------------------------------------------------------------------------

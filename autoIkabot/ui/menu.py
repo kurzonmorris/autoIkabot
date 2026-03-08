@@ -42,6 +42,7 @@ SECTION_ORDER = [
     "Combat",
     "Regular/Daily",
     "Spy/Monitoring",
+    "External",
 ]
 
 STARTUP_CONFIG_TIMEOUT_SECONDS = 120

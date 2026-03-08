@@ -274,6 +274,23 @@ def main() -> None:
             func=spyTool,
         )
 
+        # External Modules (Settings) — load and manage third-party modules
+        from autoIkabot.modules.externalModules import (
+            externalModules,
+            MODULE_NAME as EXT_NAME,
+            MODULE_SECTION as EXT_SECTION,
+            MODULE_NUMBER as EXT_NUMBER,
+            MODULE_DESCRIPTION as EXT_DESC,
+            load_all_external_modules,
+        )
+        register_module(
+            name=EXT_NAME, section=EXT_SECTION,
+            number=EXT_NUMBER, description=EXT_DESC,
+            func=externalModules,
+        )
+        # Auto-register any external modules saved from previous sessions
+        load_all_external_modules()
+
         # Auto-launch saved module configs before entering the menu
         from autoIkabot.modules.autoLoader import launch_saved_configs
         launch_saved_configs(session)
