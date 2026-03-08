@@ -18,8 +18,12 @@ from autoIkabot.helpers.naval import (
     waitForArrival,
 )
 from autoIkabot.utils.logging import get_logger
+from autoIkabot.utils.process import sleep_with_heartbeat
 
 logger = get_logger(__name__)
+
+# Maximum retries for sendGoods before giving up
+_SEND_GOODS_MAX_RETRIES = 20
 
 
 def sendGoods(
@@ -50,10 +54,16 @@ def sendGoods(
     useFreighters : bool
         Use freighters instead of trade ships.
     """
-    while True:
-        html = session.get()
-        current_city = getCity(html)
-        city = getCity(session.get(CITY_URL + str(origin_city_id)))
+    for attempt in range(_SEND_GOODS_MAX_RETRIES):
+        try:
+            html = session.get()
+            current_city = getCity(html)
+            city = getCity(session.get(CITY_URL + str(origin_city_id)))
+        except Exception as e:
+            logger.warning("sendGoods: failed to fetch city data (attempt %d): %s", attempt + 1, e)
+            sleep_with_heartbeat(session, 30)
+            continue
+
         curr_id = current_city["id"]
 
         # Switch to origin city
@@ -110,18 +120,20 @@ def sendGoods(
         try:
             resp_data = json.loads(resp, strict=False)
             if resp_data[3][1][0]["type"] == 10:
-                break  # Success
+                return  # Success
             elif resp_data[3][1][0]["type"] == 11:
                 # Need to wait for ships
                 wait_time = getMinimumWaitingTime(session)
                 if wait_time <= 0:
                     wait_time = 60
                 logger.info("Ships busy, waiting %ds before retry", wait_time)
-                time.sleep(wait_time)
+                sleep_with_heartbeat(session, wait_time)
         except (json.JSONDecodeError, IndexError, KeyError):
-            logger.warning("Unexpected response from sendGoods, retrying")
+            logger.warning("Unexpected response from sendGoods (attempt %d), retrying", attempt + 1)
 
-        time.sleep(5)
+        sleep_with_heartbeat(session, 5)
+
+    raise Exception(f"sendGoods failed after {_SEND_GOODS_MAX_RETRIES} attempts")
 
 
 def executeRoutes(session, routes: list, useFreighters: bool = False) -> None:
@@ -183,7 +195,7 @@ def executeRoutes(session, routes: list, useFreighters: bool = False) -> None:
             resources_to_send = sum(send)
             if resources_to_send == 0:
                 logger.info("No space available, waiting 1 hour")
-                time.sleep(60 * 60)
+                sleep_with_heartbeat(session, 60 * 60)
                 continue
 
             capacity = freighter_capacity if useFreighters else ship_capacity

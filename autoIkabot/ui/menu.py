@@ -14,12 +14,12 @@ import datetime
 import multiprocessing
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from autoIkabot.config import VERSION
-from autoIkabot.ui.prompts import banner, clear_screen, enter, read
+from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
-from autoIkabot.utils.process import read_critical_errors, update_process_list
+from autoIkabot.utils.process import get_process_health, read_critical_errors, report_critical_error, update_process_list, update_process_status_for_pid
 
 logger = get_logger(__name__)
 
@@ -31,6 +31,9 @@ logger = get_logger(__name__)
 # Each entry: {name, section, number, description, func, background}
 _REGISTRY: List[Dict[str, Any]] = []
 
+# Runtime child PID registry (authoritative for this parent process)
+_RUNTIME_CHILD_PIDS: set[int] = set()
+
 # Section display order
 SECTION_ORDER = [
     "Settings",
@@ -40,6 +43,9 @@ SECTION_ORDER = [
     "Regular/Daily",
     "Spy/Monitoring",
 ]
+
+STARTUP_CONFIG_TIMEOUT_SECONDS = 120
+STARTUP_WAIT_POLL_SECONDS = 0.25
 
 
 def register_module(
@@ -86,6 +92,11 @@ def get_registered_modules() -> List[Dict[str, Any]]:
     return sorted(_REGISTRY, key=lambda m: m["number"])
 
 
+def get_runtime_child_pids() -> set[int]:
+    """Return the set of child PIDs started by this parent process."""
+    return set(_RUNTIME_CHILD_PIDS)
+
+
 # ---------------------------------------------------------------------------
 # Menu display
 # ---------------------------------------------------------------------------
@@ -119,18 +130,22 @@ def _render_menu(session) -> Dict[int, Dict]:
     process_list = update_process_list(session)
     if process_list:
         print("  Background Tasks:")
-        print(f"  {'PID':>7} | {'Task':<25} | {'Started':<15} | Status")
-        print(f"  {'-' * 7}-+-{'-' * 25}-+-{'-' * 15}-+-{'-' * 30}")
+        print(f"  {'PID':>7} | {'Task':<25} | {'Started':<15} | {'Health':<8} | Status")
+        print(f"  {'-' * 7}-+-{'-' * 25}-+-{'-' * 15}-+-{'-' * 8}-+-{'-' * 30}")
         for proc in process_list:
             date_str = ""
             if proc.get("date"):
                 date_str = datetime.datetime.fromtimestamp(
                     proc["date"]
                 ).strftime("%b %d %H:%M")
+            health = get_process_health(proc)
             status = proc.get("status", "running")
             if len(status) > 30:
                 status = status[:27] + "..."
-            print(f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15} | {status}")
+            print(
+                f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15}"
+                f" | {health:<8} | {status}"
+            )
         print()
 
     modules = get_registered_modules()
@@ -156,6 +171,27 @@ def _render_menu(session) -> Dict[int, Dict]:
     print()
 
     return action_map
+
+
+def _format_critical_error_line(err: Dict[str, Any]) -> str:
+    """Render a compact one-line critical error summary for menu display."""
+    module = str(err.get("module", "Unknown"))
+    pid = err.get("pid", "?")
+    message = str(err.get("message", "")).strip().replace("\n", " | ")
+
+    if not message:
+        return f"{module} (PID {pid}) - BG_UNKNOWN: no details"
+
+    # Preserve explicit CODE: detail shape when present; otherwise add generic code.
+    if ":" in message:
+        head, tail = message.split(":", 1)
+        code = head.strip() or "BG_UNKNOWN"
+        detail = tail.strip() or "no details"
+    else:
+        code = "BG_UNKNOWN"
+        detail = message
+
+    return f"{module} (PID {pid}) - {code}: {detail}"
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +220,11 @@ def run_menu(session) -> None:
             print("!" * 55)
             print()
             for err in errors:
-                print(f"  Module: {err.get('module', 'Unknown')}")
-                print(f"  PID:    {err.get('pid', '?')}")
-                for line in err.get("message", "").splitlines():
-                    print(f"    {line}")
-                print()
+                compact = _format_critical_error_line(err)
+                if len(compact) > 110:
+                    compact = compact[:107] + "..."
+                print(f"  {compact}")
+            print()
             enter()
 
         action_map = _render_menu(session)
@@ -196,7 +232,12 @@ def run_menu(session) -> None:
         all_numbers = list(action_map.keys()) + [0]
         max_num = max(all_numbers) if all_numbers else 0
 
-        selected = read(min=0, max=max_num, digit=True, msg="Enter number: ")
+        try:
+            selected = read(min=0, max=max_num, digit=True, msg="Enter number: ")
+        except ReturnToMainMenu:
+            # Already at top-level menu; ignore and re-render.
+            print("\n  Returning to main menu...")
+            continue
 
         if selected == 0:
             return
@@ -219,6 +260,9 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
     """Run a module synchronously (blocks the menu)."""
     try:
         mod["func"](session)
+    except ReturnToMainMenu:
+        logger.info("Module %s requested return to menu", mod["name"])
+        print("\n  Returning to main menu...")
     except KeyboardInterrupt:
         print("\n  Module interrupted.")
     except Exception as e:
@@ -227,7 +271,7 @@ def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
         enter()
 
 
-def _child_entry(func, session_data, event, stdin_fd, recording=False):
+def _child_entry(func, session_data, event, stdin_fd, startup_state=None, recording=False):
     """Entry point for child processes.
 
     Reconstructs a Session from the plain dict produced by Session.to_dict(),
@@ -237,6 +281,7 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     """
     from autoIkabot.utils.logging import setup_account_logger
     from autoIkabot.web.session import Session
+    from autoIkabot.ui.prompts import ReturnToMainMenu
 
     # Set up file-based logging before anything else — without this,
     # Python's last-resort handler prints WARNING+ to stderr, clobbering
@@ -247,9 +292,6 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     )
 
     # Enable input recording in the child process (for autoLoader).
-    # This must happen here rather than in the parent because on
-    # Windows/spawn the child starts fresh and doesn't inherit
-    # the parent's module-level state.
     if recording:
         from autoIkabot.ui.prompts import start_recording_inputs
         start_recording_inputs()
@@ -257,18 +299,53 @@ def _child_entry(func, session_data, event, stdin_fd, recording=False):
     session = Session.from_dict(session_data)
     try:
         func(session, event, stdin_fd)
+    except ReturnToMainMenu:
+        logger.info("Background module config escaped to menu")
+        if startup_state is not None:
+            try:
+                startup_state.put_nowait("escaped")
+            except Exception:
+                pass
     except Exception:
+        if startup_state is not None:
+            try:
+                startup_state.put_nowait("crashed")
+            except Exception:
+                pass
         # Safety net: if a background module crashes without reporting
         # the error itself, report it here so the parent menu shows it.
         import traceback
-        from autoIkabot.utils.process import report_critical_error
         logger.exception("Background module crashed")
+        short = traceback.format_exc().splitlines()[-1]
         report_critical_error(
             session,
             func.__module__ or "Unknown",
-            f"Module crashed and stopped.\n{traceback.format_exc().splitlines()[-1]}",
+            f"BG_MODULE_CRASH: {short}",
         )
+    finally:
+        # Always unblock the parent config wait.
+        try:
+            event.set()
+        except Exception:
+            pass
 
+
+def _report_startup_failure(session, mod_name: str, code: str, detail: str) -> None:
+    """Report startup failure through critical-error channel with compact code."""
+    msg = f"{code}: {detail}"
+    try:
+        report_critical_error(session, mod_name, msg)
+    except Exception:
+        logger.exception("Failed to report startup failure for %s", mod_name)
+
+
+
+def _safe_update_child_status(session, pid: int, status: str) -> None:
+    """Best-effort status update for child PID entries in process list."""
+    try:
+        update_process_status_for_pid(session, pid, status)
+    except Exception:
+        logger.debug("Could not update child status for pid=%s", pid, exc_info=True)
 
 def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) -> None:
     """Spawn a module as a background child process.
@@ -291,20 +368,32 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         return
 
     session_data = session.to_dict()
+    startup_state = multiprocessing.Queue(maxsize=1)
 
     process = multiprocessing.Process(
         target=_child_entry,
-        args=(mod["func"], session_data, event, stdin_fd, recording),
+        args=(mod["func"], session_data, event, stdin_fd, startup_state, recording),
         name=mod["name"],
     )
-    process.start()
+    try:
+        process.start()
+    except Exception as exc:
+        detail = f"{mod['name']} could not spawn child process ({exc})"
+        print(f"\n  BG_START_SPAWN_FAIL: {detail}.")
+        logger.exception("Background module '%s' failed to start child process", mod["name"])
+        _report_startup_failure(session, mod["name"], "BG_START_SPAWN_FAIL", detail)
+        return
+
+    if process.pid:
+        _RUNTIME_CHILD_PIDS.add(process.pid)
 
     # Record the new process in the tracking file
     process_entry = {
         "pid": process.pid,
         "action": mod["name"],
         "date": time.time(),
-        "status": "configuring",
+        "status": "[PROCESSING] configuring startup",
+        "last_heartbeat": time.time(),
     }
     update_process_list(session, new_processes=[process_entry])
 
@@ -313,10 +402,57 @@ def _dispatch_background(session, mod: Dict[str, Any], recording: bool = False) 
         mod["name"], process.pid,
     )
 
-    # Block until child signals config is done
-    event.wait()
+    # Deadlock-safe wait: unblock if child dies or config exceeds timeout.
+    config_timeout = STARTUP_CONFIG_TIMEOUT_SECONDS
+    start = time.time()
+    while True:
+        child_state = None
+        try:
+            child_state = startup_state.get_nowait()
+        except Exception:
+            child_state = None
 
-    logger.info("Background module '%s' config complete, returning to menu", mod["name"])
+        if child_state == "escaped":
+            print("\n  Returning to main menu...")
+            logger.info("Background module '%s' config escaped to menu", mod["name"])
+            _safe_update_child_status(session, process.pid, "[PAUSED] startup escaped")
+            break
+        if child_state == "crashed":
+            detail = f"{mod['name']} crashed during startup"
+            print(f"\n  BG_START_CRASH: {detail}.")
+            logger.warning("Background module '%s' crashed during startup", mod["name"])
+            _report_startup_failure(session, mod["name"], "BG_START_CRASH", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_CRASH: {detail}")
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+            break
+
+        if event.wait(timeout=STARTUP_WAIT_POLL_SECONDS):
+            logger.info("Background module '%s' config complete, returning to menu", mod["name"])
+            _safe_update_child_status(session, process.pid, "[WAITING] module started")
+            break
+        if not process.is_alive():
+            code = process.exitcode
+            detail = f"{mod['name']} exited during startup (code {code})"
+            print(f"\n  BG_START_FAIL: {detail}.")
+            logger.warning("Background module '%s' died during config (exitcode=%s)", mod["name"], code)
+            _report_startup_failure(session, mod["name"], "BG_START_FAIL", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_FAIL: {detail}")
+            break
+        if (time.time() - start) > config_timeout:
+            detail = f"{mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s"
+            print(f"\n  BG_START_TIMEOUT: {detail}. Returning to menu.")
+            logger.warning("Background module '%s' config timed out, terminating", mod["name"])
+            _report_startup_failure(session, mod["name"], "BG_START_TIMEOUT", detail)
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_START_TIMEOUT: {detail}")
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            break
 
 
 def dispatch_module_auto(
@@ -358,13 +494,29 @@ def dispatch_module_auto(
         return False
 
     session_data = session.to_dict()
+    startup_state = multiprocessing.Queue(maxsize=1)
 
     process = multiprocessing.Process(
         target=_child_entry,
-        args=(mod["func"], session_data, event, stdin_fd),
+        args=(mod["func"], session_data, event, stdin_fd, startup_state),
         name=f"AutoLoad-{mod['name']}",
     )
-    process.start()
+    try:
+        process.start()
+    except Exception as exc:
+        logger.exception("Auto-load of '%s' failed to spawn child process", mod["name"])
+        print(f"  BG_AUTOLOAD_SPAWN_FAIL: {mod['name']} could not spawn child process ({exc}).")
+        _report_startup_failure(
+            session,
+            mod["name"],
+            "BG_AUTOLOAD_SPAWN_FAIL",
+            f"{mod['name']} could not spawn child process ({exc})",
+        )
+        set_predetermined_input([])
+        return False
+
+    if process.pid:
+        _RUNTIME_CHILD_PIDS.add(process.pid)
 
     # Clear in parent after fork
     set_predetermined_input([])
@@ -373,7 +525,7 @@ def dispatch_module_auto(
         "pid": process.pid,
         "action": mod["name"],
         "date": time.time(),
-        "status": "auto-loaded",
+        "status": "[PROCESSING] autoload configuring",
         "last_heartbeat": time.time(),
     }
     update_process_list(session, new_processes=[process_entry])
@@ -384,9 +536,70 @@ def dispatch_module_auto(
     )
 
     # Wait for config phase with timeout
-    if not event.wait(timeout=120):
-        logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
-        return False
+    start = time.time()
+    while True:
+        child_state = None
+        try:
+            child_state = startup_state.get_nowait()
+        except Exception:
+            child_state = None
+
+        if child_state == "escaped":
+            logger.info("Auto-load of '%s' escaped during config", mod["name"])
+            print(f"  BG_AUTOLOAD_ESCAPED: {mod['name']} escaped during startup.")
+            _safe_update_child_status(session, process.pid, "[PAUSED] autoload escaped")
+            return False
+        if child_state == "crashed":
+            logger.warning("Auto-load of '%s' crashed during config", mod["name"])
+            print(f"  BG_AUTOLOAD_CRASH: {mod['name']} crashed during startup.")
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_CRASH",
+                f"{mod['name']} crashed during startup",
+            )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_CRASH: {mod['name']} crashed during startup")
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+            return False
+
+        if event.wait(timeout=STARTUP_WAIT_POLL_SECONDS):
+            _safe_update_child_status(session, process.pid, "[WAITING] auto-loaded module started")
+            break
+
+        if not process.is_alive():
+            logger.warning(
+                "Auto-load of '%s' exited during config (exitcode=%s)",
+                mod["name"], process.exitcode,
+            )
+            print(f"  BG_AUTOLOAD_FAIL: {mod['name']} exited during startup (code {process.exitcode}).")
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_FAIL",
+                f"{mod['name']} exited during startup (code {process.exitcode})",
+            )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_FAIL: {mod['name']} exited during startup (code {process.exitcode})")
+            return False
+
+        if (time.time() - start) > STARTUP_CONFIG_TIMEOUT_SECONDS:
+            logger.warning("Auto-load of '%s' timed out during config phase", mod["name"])
+            print(f"  BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s.")
+            _report_startup_failure(
+                session,
+                mod["name"],
+                "BG_AUTOLOAD_TIMEOUT",
+                f"{mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s",
+            )
+            _safe_update_child_status(session, process.pid, f"[BROKEN] BG_AUTOLOAD_TIMEOUT: {mod['name']} config exceeded {STARTUP_CONFIG_TIMEOUT_SECONDS}s")
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            return False
 
     logger.info("Auto-load of '%s' config complete", mod["name"])
     return True

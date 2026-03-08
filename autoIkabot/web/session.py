@@ -33,12 +33,15 @@ from autoIkabot.config import (
     HEALTH_CHECK_INTERVAL,
     HEALTH_CHECK_VIEW,
     RATE_LIMIT_MIN_DELAY,
-    SESSION_COOKIE_NAMES,
     SSL_VERIFY,
 )
 from autoIkabot.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class SessionBrokenError(RuntimeError):
+    """Raised when session communications are unrecoverably broken."""
 
 
 class Session:
@@ -99,6 +102,10 @@ class Session:
         # Account info for re-login
         self._account_info = account_info
 
+        # Session continuity + retry policy
+        self._continuity_mode = str(account_info.get("continuity_mode", "safe")).lower()
+        self._network_retry_budget = int(account_info.get("network_retry_budget", 3))
+
         # Request tracking
         self.request_history = deque(maxlen=5)
 
@@ -157,11 +164,13 @@ class Session:
             "gf_token": self.gf_token,
             "blackbox_token": self.blackbox_token,
             "game_headers": dict(self.game_headers),
-            "cookies": dict(self.s.cookies),
+            "ikariam_cookie": self._get_ikariam_cookie(),
             "proxies": dict(self.s.proxies),
             "account_info": self._account_info,
             "action_request_token": self._action_request_token,
             "current_city_id": self._current_city_id,
+            "continuity_mode": self._continuity_mode,
+            "network_retry_budget": self._network_retry_budget,
         }
 
     @classmethod
@@ -198,12 +207,15 @@ class Session:
         obj._account_info = data["account_info"]
         obj._action_request_token = data["action_request_token"]
         obj._current_city_id = data["current_city_id"]
+        obj._continuity_mode = str(data.get("continuity_mode", "safe")).lower()
+        obj._network_retry_budget = int(data.get("network_retry_budget", 3))
 
         # Build fresh requests.Session
         obj.s = requests.Session()
         obj.s.headers.update(data["game_headers"])
-        for name, value in data["cookies"].items():
-            obj.s.cookies.set(name, value)
+        ikariam_cookie = data.get("ikariam_cookie")
+        if ikariam_cookie:
+            obj.s.cookies.set("ikariam", ikariam_cookie, domain=obj.host, path="/")
         if data["proxies"]:
             obj.s.proxies.update(data["proxies"])
 
@@ -365,6 +377,40 @@ class Session:
                 time.sleep(sleep_time)
             self._last_request_time = time.monotonic()
 
+    def _mark_broken(self, code: str, detail: str) -> None:
+        """Mark session as broken and raise a terminal session exception."""
+        msg = f"{code}: {detail}"
+        logger.error(msg)
+        try:
+            self.setStatus(f"[BROKEN] {msg}")
+        except Exception:
+            pass
+        if not self.is_parent:
+            try:
+                from autoIkabot.utils.process import report_critical_error
+                report_critical_error(self, "Session", msg)
+            except Exception:
+                pass
+        raise SessionBrokenError(msg)
+
+    def _try_refresh_from_ikariam_cookie(self) -> bool:
+        """Try to refresh the PHP session using current ikariam cookie only."""
+        ik = self._get_ikariam_cookie()
+        if not ik:
+            return False
+        try:
+            self.s.cookies.set("ikariam", ik, domain=self.host, path="/")
+            html = self.s.get(self.url_base, verify=SSL_VERIFY, timeout=30).text
+            if self._is_expired(html):
+                return False
+            self._try_extract_token(html)
+            self._try_extract_city_id(html)
+            return True
+        except requests.RequestException:
+            return False
+
+
+
     # ------------------------------------------------------------------
     # Session expiry / re-login
     # ------------------------------------------------------------------
@@ -375,6 +421,15 @@ class Session:
         Uses the stored account_info to perform a fresh login, then
         updates this session's cookies and state.
         """
+        logger.warning("Session expired")
+
+        if self._continuity_mode == "safe":
+            logger.info("Trying cookie-only session refresh before re-login")
+            if self._try_refresh_from_ikariam_cookie():
+                logger.info("Cookie-only refresh succeeded")
+                return
+            logger.info("Cookie-only refresh failed, falling back to re-login")
+
         logger.warning("Session expired, attempting re-login")
 
         # Lazy import to avoid circular dependency
@@ -518,83 +573,97 @@ class Session:
         return None
 
     def export_cookies(self) -> str:
-        """Export session cookies as a JSON string.
+        """Export the ikariam session cookie as a JSON string.
+
+        Only the ``ikariam`` cookie is exported.  This is by design: each
+        client (browser, bot instance) should maintain its own PHPSESSID
+        so that CSRF tokens (actionRequest) don't conflict.
 
         Returns
         -------
         str
-            JSON string of session cookies.
+            JSON string like ``'{"ikariam": "value"}'``, or ``'{}'``.
         """
-        cookie_dict = {}
-        for name in SESSION_COOKIE_NAMES:
-            val = self.s.cookies.get(name, domain=self.host)
-            if val is None:
-                # Fallback: iterate all cookies
-                for cookie in self.s.cookies:
-                    if cookie.name == name:
-                        val = cookie.value
-                        break
-            if val is not None:
-                cookie_dict[name] = val
-        return json.dumps(cookie_dict, indent=2)
+        ikariam = self._get_ikariam_cookie()
+        if ikariam is None:
+            return "{}"
+        return json.dumps({"ikariam": ikariam})
 
     def export_cookies_js(self) -> str:
-        """Export the ikariam session cookie as a JavaScript snippet.
+        """Export the ikariam cookie as a JavaScript snippet for browser console.
 
-        Matches ikabot's proven JS format for pasting into the browser
-        console to restore a session.
+        Only the ``ikariam`` cookie is set in the browser.  The browser
+        keeps its own PHPSESSID so the bot and browser maintain independent
+        PHP sessions and don't conflict on CSRF tokens.
 
         Returns
         -------
         str
-            JavaScript code that sets the cookie in a browser console.
+            JavaScript code that sets the ikariam cookie in a browser.
         """
-        val = self._get_ikariam_cookie()
-        if val is None:
+        ikariam = self._get_ikariam_cookie()
+        if ikariam is None:
             return "// No ikariam session cookie found"
-        cookie_json = json.dumps({"ikariam": val})
+        cookie_json = json.dumps({"ikariam": ikariam})
         return (
-            'cookies={};i=0;for(let cookie in cookies)'
-            '{{document.cookie=Object.keys(cookies)[i]+"="+cookies[cookie];i++}}'
-        ).format(cookie_json)
+            f"const cookies = {cookie_json};"
+            "Object.entries(cookies).forEach(([k, v]) => {"
+            "document.cookie = `${k}=${v}`;"
+            "});"
+        )
 
     def import_cookies(self, cookie_input: str) -> bool:
-        """Import cookies from a JSON string or raw ikariam cookie value.
+        """Import an ikariam cookie value from user input.
+
+        Accepts either a JSON dict containing an ``"ikariam"`` key, or a
+        raw cookie value (optionally prefixed with ``ikariam=``).  Only the
+        ``ikariam`` cookie is applied; other keys in JSON input are ignored
+        to prevent PHPSESSID sharing.
 
         Parameters
         ----------
         cookie_input : str
-            Either a JSON dict of cookies, or a raw ikariam cookie value.
+            Cookie string from the user.
 
         Returns
         -------
         bool
-            True if the imported cookies produced a valid session.
+            True if the imported cookie produced a valid session.
         """
         cookie_input = cookie_input.strip()
 
-        # Try JSON first
+        # Try JSON first — extract only the ikariam key
         try:
             cookie_dict = json.loads(cookie_input)
+            ikariam_value = cookie_dict.get("ikariam", "")
         except (json.JSONDecodeError, ValueError):
             # Treat as raw ikariam cookie value
-            cookie_input = cookie_input.replace("ikariam=", "")
-            cookie_dict = {"ikariam": cookie_input}
+            ikariam_value = cookie_input.replace("ikariam=", "")
 
-        # Set cookies on the session
-        for name, value in cookie_dict.items():
-            self.s.cookies.set(name, value, domain=self.host, path="/")
+        if not ikariam_value:
+            logger.warning("No ikariam cookie value found in input")
+            return False
+
+        # Set the ikariam cookie using domain-fallback pattern
+        if self.host in self.s.cookies._cookies:
+            self.s.cookies.set("ikariam", ikariam_value, domain=self.host, path="/")
+        else:
+            self.s.cookies.set("ikariam", ikariam_value, domain="", path="/")
 
         # Validate by making a test request
-        html = self.s.get(self.url_base, verify=SSL_VERIFY, timeout=30).text
+        try:
+            html = self.s.get(self.url_base, verify=SSL_VERIFY, timeout=30).text
+        except requests.RequestException:
+            logger.warning("Cookie import validation failed due to network error")
+            return False
         if self._is_expired(html):
-            logger.warning("Imported cookies are invalid/expired")
+            logger.warning("Imported ikariam cookie is invalid/expired")
             return False
 
         # Update cached state from the response
         self._try_extract_token(html)
         self._try_extract_city_id(html)
-        logger.info("Cookies imported and validated successfully")
+        logger.info("ikariam cookie imported and validated successfully")
         return True
 
     def get_session_cookies(self) -> Dict[str, str]:
@@ -648,6 +717,7 @@ class Session:
         else:
             full_url = self.url_base + url
 
+        network_errors = 0
         while True:
             try:
                 self._enforce_rate_limit()
@@ -695,14 +765,16 @@ class Session:
                 return response if full_response else html
 
             except requests.exceptions.ConnectionError:
-                logger.warning(
-                    "Connection error on GET, retrying in %ds", CONNECTION_ERROR_WAIT
-                )
+                network_errors += 1
+                if network_errors >= self._network_retry_budget:
+                    self._mark_broken("GET_RETRY_EXHAUSTED", f"{full_url} (connection error)")
+                logger.warning("Connection error on GET, retrying in %ds", CONNECTION_ERROR_WAIT)
                 time.sleep(CONNECTION_ERROR_WAIT)
             except requests.exceptions.Timeout:
-                logger.warning(
-                    "Timeout on GET, retrying in %ds", CONNECTION_ERROR_WAIT
-                )
+                network_errors += 1
+                if network_errors >= self._network_retry_budget:
+                    self._mark_broken("GET_RETRY_EXHAUSTED", f"{full_url} (timeout)")
+                logger.warning("Timeout on GET, retrying in %ds", CONNECTION_ERROR_WAIT)
                 time.sleep(CONNECTION_ERROR_WAIT)
 
     def post(
@@ -781,6 +853,8 @@ class Session:
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         }
 
+        network_errors = 0
+        request_id_retries = 0
         while True:
             try:
                 self._enforce_rate_limit()
@@ -824,42 +898,59 @@ class Session:
                 # Check for session expiry
                 if not ignore_expire and self._is_expired(resp_text):
                     self._handle_session_expired()
-                    # Retry from scratch with fresh token
-                    return self.post(
-                        url=url_original,
-                        payload=payload_original,
-                        params=params_original,
-                        ignore_expire=ignore_expire,
-                        no_index=no_index,
-                        full_response=full_response,
-                    )
+                    # Rebuild request with fresh token and retry via loop
+                    url = url_original
+                    payload = dict(payload_original)
+                    params = dict(params_original)
+                    token = self._extract_token()
+                    url = url.replace(ACTION_REQUEST_PLACEHOLDER, token)
+                    if "actionRequest" in payload:
+                        payload["actionRequest"] = token
+                    if "actionRequest" in params:
+                        params["actionRequest"] = token
+                    if "ajax" not in params and "ajax" not in payload:
+                        if params:
+                            params["ajax"] = "1"
+                    full_url = self.url_base.replace("index.php", "") + url if no_index else self.url_base + url
+                    continue
 
                 # Check for bad request ID — retry with fresh token
                 if "TXT_ERROR_WRONG_REQUEST_ID" in resp_text:
-                    logger.debug("Stale actionRequest token, re-fetching")
-                    # Force re-fetch by clearing the cache
+                    request_id_retries += 1
+                    logger.debug("Stale actionRequest token, retry %d", request_id_retries)
                     self._action_request_token = ""
-                    return self.post(
-                        url=url_original,
-                        payload=payload_original,
-                        params=params_original,
-                        ignore_expire=ignore_expire,
-                        no_index=no_index,
-                        full_response=full_response,
-                    )
+                    if request_id_retries >= self._network_retry_budget:
+                        self._mark_broken("POST_REQUEST_ID_EXHAUSTED", full_url)
+                    # rebuild request with fresh token on next loop
+                    url = url_original
+                    payload = dict(payload_original)
+                    params = dict(params_original)
+                    # Read cached token outside the lock to avoid deadlock
+                    # (_extract_token also acquires _token_lock)
+                    with self._token_lock:
+                        cached = self._action_request_token
+                    token = cached if cached else self._extract_token()
+                    url = url.replace(ACTION_REQUEST_PLACEHOLDER, token)
+                    if "actionRequest" in payload:
+                        payload["actionRequest"] = token
+                    if "actionRequest" in params:
+                        params["actionRequest"] = token
+                    full_url = self.url_base.replace("index.php", "") + url if no_index else self.url_base + url
+                    continue
 
                 return response if full_response else resp_text
 
             except requests.exceptions.ConnectionError:
-                logger.warning(
-                    "Connection error on POST, retrying in %ds",
-                    CONNECTION_ERROR_WAIT,
-                )
+                network_errors += 1
+                if network_errors >= self._network_retry_budget:
+                    self._mark_broken("POST_RETRY_EXHAUSTED", f"{full_url} (connection error)")
+                logger.warning("Connection error on POST, retrying in %ds", CONNECTION_ERROR_WAIT)
                 time.sleep(CONNECTION_ERROR_WAIT)
             except requests.exceptions.Timeout:
-                logger.warning(
-                    "Timeout on POST, retrying in %ds", CONNECTION_ERROR_WAIT
-                )
+                network_errors += 1
+                if network_errors >= self._network_retry_budget:
+                    self._mark_broken("POST_RETRY_EXHAUSTED", f"{full_url} (timeout)")
+                logger.warning("Timeout on POST, retrying in %ds", CONNECTION_ERROR_WAIT)
                 time.sleep(CONNECTION_ERROR_WAIT)
 
     # ------------------------------------------------------------------

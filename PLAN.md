@@ -2,7 +2,18 @@
 
 This document is the master plan for the autoIkabot project. Before each coding session we will review it, discuss foreseeable issues, and agree on what to tackle next. **No code will be written without explicit approval.**
 
+> **Phase 6 alignment note:** The operational source of truth for runtime behavior is now `OPERATIONAL_CONTRACT.md`.
+> If any legacy section in this plan conflicts with current lifecycle/state/session behavior, follow `OPERATIONAL_CONTRACT.md` first.
+
 ---
+
+
+### Runtime Operations Quick-Reference (Contract Aligned)
+- Canonical task states are `WAITING`, `PROCESSING`, `PAUSED`, `BROKEN`, with `FROZEN` as a derived fallback only (see `OPERATIONAL_CONTRACT.md`).
+- Long waits must remain heartbeat-aware so monitoring does not misclassify tasks as frozen.
+- On parent shutdown: give `PROCESSING` tasks grace time (up to policy limit), terminate `WAITING`/`PAUSED` tasks immediately, then force-kill any stragglers.
+- Global prompt escape token is `\` and returns to the main menu at input boundaries after cleanup.
+- Troubleshooting precedence and matrix: always follow `OPERATIONAL_CONTRACT.md` first.
 
 ## Phase 1: Foundation & Account Management
 
