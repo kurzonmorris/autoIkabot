@@ -216,6 +216,21 @@ def main() -> None:
             background=True,
         )
 
+        # Daily Tasks (Regular/Daily) — background
+        from autoIkabot.modules.dailyTasks import (
+            dailyTasks,
+            MODULE_NAME as DAILY_NAME,
+            MODULE_SECTION as DAILY_SECTION,
+            MODULE_NUMBER as DAILY_NUMBER,
+            MODULE_DESCRIPTION as DAILY_DESC,
+        )
+        register_module(
+            name=DAILY_NAME, section=DAILY_SECTION,
+            number=DAILY_NUMBER, description=DAILY_DESC,
+            func=dailyTasks,
+            background=True,
+        )
+
         # Auto Loader (Settings) — synchronous
         from autoIkabot.modules.autoLoader import (
             autoLoader,
