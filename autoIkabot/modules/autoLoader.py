@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 # --- Module Metadata ---
 MODULE_NAME = "Auto Loader"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 4
+MODULE_NUMBER = 8
 MODULE_DESCRIPTION = "Auto-start modules on login"
 
 RESTORE_HEALTH_STATES = {"WAITING", "PROCESSING", "PAUSED"}

@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 # Module registration metadata (used by ui/menu.py)
 MODULE_NAME = "Resource Transport Manager"
 MODULE_SECTION = "Transport"
-MODULE_NUMBER = 3
+MODULE_NUMBER = 2
 MODULE_DESCRIPTION = "Resource Transport Manager"
 
 

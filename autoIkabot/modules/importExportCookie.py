@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 MODULE_NAME = "Cookie Manager"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 1
+MODULE_NUMBER = 6
 MODULE_DESCRIPTION = "Import/Export session cookies"
 
 # ANSI colour helpers

@@ -25,8 +25,8 @@ logger = get_logger(__name__)
 
 MODULE_VERSION = "v1.3"
 MODULE_NAME = "Spy Tool"
-MODULE_SECTION = "Spy/Monitoring"
-MODULE_NUMBER = 20
+MODULE_SECTION = "Spying"
+MODULE_NUMBER = 3
 MODULE_DESCRIPTION = "Intelligence gathering and spy operations"
 
 DEBUG_ENABLED = True

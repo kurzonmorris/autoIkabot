@@ -36,12 +36,12 @@ _RUNTIME_CHILD_PIDS: set[int] = set()
 
 # Section display order
 SECTION_ORDER = [
-    "Settings",
     "Construction",
     "Transport",
-    "Combat",
-    "Regular/Daily",
-    "Spy/Monitoring",
+    "Military",
+    "Spying",
+    "Dailies/Regular",
+    "Settings",
 ]
 
 STARTUP_CONFIG_TIMEOUT_SECONDS = 120
@@ -159,14 +159,13 @@ def _render_menu(session) -> Dict[int, Dict]:
         sec = mod["section"]
         sections.setdefault(sec, []).append(mod)
 
-    # Display sections in order
+    # Display sections in order (always shown, even if empty)
     for section_name in SECTION_ORDER:
-        if section_name not in sections:
-            continue
         print(f"--- {section_name} ---")
-        for mod in sorted(sections[section_name], key=lambda m: m["number"]):
-            print(f"  ({mod['number']}) {mod['description']}")
-            action_map[mod["number"]] = mod
+        if section_name in sections:
+            for mod in sorted(sections[section_name], key=lambda m: m["number"]):
+                print(f"  ({mod['number']}) {mod['description']}")
+                action_map[mod["number"]] = mod
         print()
 
     print("  (0) Exit")

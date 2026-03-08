@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 MODULE_NAME = "Task Status"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 5
+MODULE_NUMBER = 9
 MODULE_DESCRIPTION = "Check health of background tasks"
 
 
