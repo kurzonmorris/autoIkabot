@@ -15,7 +15,7 @@ import traceback
 from autoIkabot.ui.prompts import ReturnToMainMenu, banner, enter, read
 from autoIkabot.utils.logging import get_logger
 from autoIkabot.utils.process import set_child_mode
-from autoIkabot.web.game_mirror import compute_port, find_available_port, run_mirror
+from autoIkabot.web.game_mirror import compute_port, run_mirror
 
 logger = get_logger(__name__)
 
@@ -26,7 +26,10 @@ MODULE_DESCRIPTION = "Play Ikariam in your browser via the bot's session"
 
 
 def webServer(session, event, stdin_fd):
-    """Configure and start the game mirror web server.
+    """Start the game mirror web server.
+
+    Starts immediately on the deterministic port for this account.
+    Asks the user if they want the link sent via messenger.
 
     Parameters
     ----------
@@ -45,42 +48,32 @@ def webServer(session, event, stdin_fd):
         banner()
 
         email = session._account_info.get("email", session.username)
-        preferred_port = compute_port(email, session.servidor, session.mundo)
+        port = compute_port(email, session.servidor, session.mundo)
 
         print("  Game Mirror (Web Server)")
         print("  " + "=" * 40)
         print()
-        print(f"  This will start a local web server so you can play")
-        print(f"  Ikariam in your browser using the bot's session.")
-        print()
         print(f"  Account: {session.username} on s{session.mundo}-{session.servidor}")
-        print(f"  Assigned port: {preferred_port}")
-        print()
-        print("  Options:")
-        print(f"  (1) Start on port {preferred_port} (recommended)")
-        print("  (2) Choose a custom port")
-        print("  (0) Cancel")
+        print(f"  Starting on port {port}...")
         print()
 
-        choice = read(min=0, max=2, digit=True)
-        if choice == 0:
-            event.set()
-            return
-
-        port = None
-        if choice == 2:
-            print()
-            print("  Enter port number (1024-65535):")
-            port = read(min=1024, max=65535, digit=True)
-
-        print()
-        print("  Starting game mirror...")
+        # Check if notifications are configured and ask about sending link
+        send_notification = False
+        try:
+            from autoIkabot.notifications.notify import _get_manager
+            mgr = _get_manager(session)
+            if mgr.has_any_backend():
+                print("  Send the link via messenger? (Y/n)")
+                answer = read(values=["y", "Y", "n", "N", ""])
+                send_notification = answer.lower() != "n"
+        except Exception:
+            pass
 
         # Switch to background mode
         set_child_mode(session)
         event.set()
 
-        # Start the server (blocks on this thread)
+        # Start the server
         try:
             info = run_mirror(session, host="127.0.0.1", port=port)
         except ImportError as e:
@@ -97,10 +90,20 @@ def webServer(session, event, stdin_fd):
             return
 
         url = info["url"]
-        actual_port = info["port"]
         session.setStatus(f"[PROCESSING] mirror running on {url}")
-
         logger.info("Game mirror running at %s", url)
+
+        # Send link via notification if requested
+        if send_notification:
+            try:
+                from autoIkabot.notifications.notify import sendToBot
+                sendToBot(
+                    session,
+                    f"Game mirror started for {session.username} "
+                    f"(s{session.mundo}-{session.servidor}):\n{url}",
+                )
+            except Exception as e:
+                logger.warning("Failed to send mirror link notification: %s", e)
 
         # Keep the process alive while the daemon thread serves requests
         while True:
