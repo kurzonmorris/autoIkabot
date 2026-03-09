@@ -37,7 +37,7 @@ EXTERNAL_MODULES_FILE = DATA_DIR / "external_modules.json"
 # Logging constants
 # ---------------------------------------------------------------------------
 LOG_MAX_BYTES = 5 * 1024 * 1024   # 5 MB per log file
-LOG_BACKUP_COUNT = 1               # At most 1 backup (.1 file)
+LOG_BACKUP_COUNT = 5               # Keep 5 backups (~30 MB total per log)
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 

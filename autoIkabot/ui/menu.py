@@ -12,6 +12,7 @@ Supports two module types:
 
 import datetime
 import multiprocessing
+import os
 import sys
 import time
 from typing import Any, Dict, List
@@ -260,15 +261,18 @@ def run_menu(session) -> None:
 
 def _dispatch_sync(session, mod: Dict[str, Any]) -> None:
     """Run a module synchronously (blocks the menu)."""
+    logger.info("MODULE_START: %s (sync, PID %d)", mod["name"], os.getpid())
     try:
         mod["func"](session)
+        logger.info("MODULE_STOP: %s completed (sync)", mod["name"])
     except ReturnToMainMenu:
-        logger.info("Module %s requested return to menu", mod["name"])
+        logger.info("MODULE_ESCAPE: %s returned to menu", mod["name"])
         print("\n  Returning to main menu...")
     except KeyboardInterrupt:
+        logger.info("MODULE_INTERRUPT: %s interrupted by user", mod["name"])
         print("\n  Module interrupted.")
     except Exception as e:
-        logger.exception("Module %s raised an exception", mod["name"])
+        logger.exception("MODULE_CRASH: %s raised an exception", mod["name"])
         print(f"\n  Error: {e}")
         enter()
 
@@ -298,17 +302,23 @@ def _child_entry(func, session_data, event, stdin_fd, startup_state=None, record
         from autoIkabot.ui.prompts import start_recording_inputs
         start_recording_inputs()
 
+    mod_name = getattr(func, "__name__", func.__module__ or "Unknown")
     session = Session.from_dict(session_data)
+    logger.info("MODULE_START: %s (PID %d)", mod_name, os.getpid())
     try:
         func(session, event, stdin_fd)
+        logger.info("MODULE_STOP: %s exited normally (PID %d)", mod_name, os.getpid())
     except ReturnToMainMenu:
-        logger.info("Background module config escaped to menu")
+        logger.info("MODULE_ESCAPE: %s config escaped to menu (PID %d)", mod_name, os.getpid())
         if startup_state is not None:
             try:
                 startup_state.put_nowait("escaped")
             except Exception:
                 pass
     except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("MODULE_CRASH: %s (PID %d)\n%s", mod_name, os.getpid(), tb)
         if startup_state is not None:
             try:
                 startup_state.put_nowait("crashed")
@@ -316,15 +326,14 @@ def _child_entry(func, session_data, event, stdin_fd, startup_state=None, record
                 pass
         # Safety net: if a background module crashes without reporting
         # the error itself, report it here so the parent menu shows it.
-        import traceback
-        logger.exception("Background module crashed")
-        short = traceback.format_exc().splitlines()[-1]
+        short = tb.splitlines()[-1]
         report_critical_error(
             session,
             func.__module__ or "Unknown",
             f"BG_MODULE_CRASH: {short}",
         )
     finally:
+        logger.info("MODULE_EXIT: %s cleanup (PID %d)", mod_name, os.getpid())
         # Always unblock the parent config wait.
         try:
             event.set()

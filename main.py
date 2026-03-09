@@ -306,6 +306,20 @@ def main() -> None:
         # Auto-register any external modules saved from previous sessions
         load_all_external_modules()
 
+        # View Logs (Settings) — synchronous
+        from autoIkabot.modules.viewLogs import (
+            viewLogs,
+            MODULE_NAME as LOGS_NAME,
+            MODULE_SECTION as LOGS_SECTION,
+            MODULE_NUMBER as LOGS_NUMBER,
+            MODULE_DESCRIPTION as LOGS_DESC,
+        )
+        register_module(
+            name=LOGS_NAME, section=LOGS_SECTION,
+            number=LOGS_NUMBER, description=LOGS_DESC,
+            func=viewLogs,
+        )
+
         # Auto-launch saved module configs before entering the menu
         from autoIkabot.modules.autoLoader import launch_saved_configs
         launch_saved_configs(session)
