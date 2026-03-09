@@ -102,7 +102,7 @@ def webServer(session, event, stdin_fd):
         print()
         password = None
         while password is None:
-            raw = read(msg="  Password: ", min=0, max=64)
+            raw = read(msg="  Password: ", empty=True)
             if raw == "":
                 password = _generate_password()
                 print(f"  Generated password: {password}")
