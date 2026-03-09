@@ -36,12 +36,12 @@ _RUNTIME_CHILD_PIDS: set[int] = set()
 
 # Section display order
 SECTION_ORDER = [
-    "Settings",
     "Construction",
     "Transport",
-    "Combat",
-    "Regular/Daily",
-    "Spy/Monitoring",
+    "Military",
+    "Spying",
+    "Dailies/Regular",
+    "Settings",
 ]
 
 STARTUP_CONFIG_TIMEOUT_SECONDS = 120
@@ -140,8 +140,10 @@ def _render_menu(session) -> Dict[int, Dict]:
                 ).strftime("%b %d %H:%M")
             health = get_process_health(proc)
             status = proc.get("status", "running")
-            if len(status) > 30:
-                status = status[:27] + "..."
+            # Show full URL for mirror status lines
+            if "http://" not in status and "https://" not in status:
+                if len(status) > 30:
+                    status = status[:27] + "..."
             print(
                 f"  {proc['pid']:>7} | {proc['action']:<25} | {date_str:<15}"
                 f" | {health:<8} | {status}"
@@ -157,14 +159,13 @@ def _render_menu(session) -> Dict[int, Dict]:
         sec = mod["section"]
         sections.setdefault(sec, []).append(mod)
 
-    # Display sections in order
+    # Display sections in order (always shown, even if empty)
     for section_name in SECTION_ORDER:
-        if section_name not in sections:
-            continue
         print(f"--- {section_name} ---")
-        for mod in sorted(sections[section_name], key=lambda m: m["number"]):
-            print(f"  ({mod['number']}) {mod['description']}")
-            action_map[mod["number"]] = mod
+        if section_name in sections:
+            for mod in sorted(sections[section_name], key=lambda m: m["number"]):
+                print(f"  ({mod['number']}) {mod['description']}")
+                action_map[mod["number"]] = mod
         print()
 
     print("  (0) Exit")

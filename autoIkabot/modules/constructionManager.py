@@ -64,7 +64,7 @@ logger = get_logger(__name__)
 # --- Module Metadata ---
 MODULE_NAME = "Construction Manager"
 MODULE_SECTION = "Construction"
-MODULE_NUMBER = 21
+MODULE_NUMBER = 1
 MODULE_DESCRIPTION = "Build new buildings or upgrade existing ones"
 
 

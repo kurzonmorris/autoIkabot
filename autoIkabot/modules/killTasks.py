@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 # Module registration metadata
 MODULE_NAME = "Kill Tasks"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 2
+MODULE_NUMBER = 10
 MODULE_DESCRIPTION = "Kill running background tasks"
 
 

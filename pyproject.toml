@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["rich>=13.0.0"]
+mirror = ["flask>=3.0.0"]
 dev = ["pytest>=7.0.0", "pytest-cov"]
 
 [project.scripts]

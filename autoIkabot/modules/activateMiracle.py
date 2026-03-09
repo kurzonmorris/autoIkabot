@@ -37,8 +37,8 @@ logger = get_logger(__name__)
 
 # --- Module Metadata ---
 MODULE_NAME = "Activate Miracle"
-MODULE_SECTION = "Regular/Daily"
-MODULE_NUMBER = 11
+MODULE_SECTION = "Dailies/Regular"
+MODULE_NUMBER = 5
 MODULE_DESCRIPTION = "Activate a miracle on repeat"
 
 

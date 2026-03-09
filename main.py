@@ -172,6 +172,21 @@ def main() -> None:
             func=killTasks,
         )
 
+        # Web Server / Game Mirror (Settings) — background
+        from autoIkabot.modules.webServer import (
+            webServer,
+            MODULE_NAME as WEB_NAME,
+            MODULE_SECTION as WEB_SECTION,
+            MODULE_NUMBER as WEB_NUMBER,
+            MODULE_DESCRIPTION as WEB_DESC,
+        )
+        register_module(
+            name=WEB_NAME, section=WEB_SECTION,
+            number=WEB_NUMBER, description=WEB_DESC,
+            func=webServer,
+            background=True,
+        )
+
         # Transport modules (Phase 4) — runs in background
         from autoIkabot.modules.resourceTransportManager import (
             resourceTransportManager,

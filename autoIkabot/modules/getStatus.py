@@ -17,8 +17,8 @@ logger = get_logger(__name__)
 getcontext().prec = 30
 
 MODULE_NAME = "Game Status"
-MODULE_SECTION = "Spy/Monitoring"
-MODULE_NUMBER = 19
+MODULE_SECTION = "Spying"
+MODULE_NUMBER = 4
 MODULE_DESCRIPTION = "View empire status (resources, production, buildings)"
 
 
