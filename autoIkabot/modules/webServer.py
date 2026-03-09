@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 MODULE_NAME = "Web Server"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 11
+MODULE_NUMBER = 12
 MODULE_DESCRIPTION = "Play Ikariam in your browser via the bot's session"
 
 

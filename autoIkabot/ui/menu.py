@@ -42,6 +42,7 @@ SECTION_ORDER = [
     "Spying",
     "Dailies/Regular",
     "Settings",
+    "External",
 ]
 
 STARTUP_CONFIG_TIMEOUT_SECONDS = 120

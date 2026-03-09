@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 MODULE_NAME = "Notification Setup"
 MODULE_SECTION = "Settings"
-MODULE_NUMBER = 7
+MODULE_NUMBER = 8
 MODULE_DESCRIPTION = "Configure Telegram, Discord, ntfy.sh notifications"
 
 # ANSI colour helpers
